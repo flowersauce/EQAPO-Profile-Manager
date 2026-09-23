@@ -16,6 +16,7 @@ $ErrorActionPreference = 'Stop'
 if (-not $IsWindows) { throw 'Manifest generation requires Windows.' }
 
 $identifier = 'Flowersauce.EQAPOProfileManager'
+$manifestVersion = '1.12.0'
 $repository = 'https://github.com/flowersauce/EQAPO-Profile-Manager'
 $installerUrl = "$repository/releases/download/v$Version/EQM-$Version-windows-x64.msi"
 $outputRoot = [IO.Path]::GetFullPath($OutputDirectory)
@@ -84,12 +85,16 @@ try {
     $common = "PackageIdentifier: $identifier`nPackageVersion: '$Version'"
     $files = [ordered]@{}
     $files["$identifier.yaml"] = @"
+# yaml-language-server: `$schema=https://aka.ms/winget-manifest.version.$manifestVersion.schema.json
+
 $common
 DefaultLocale: en-US
 ManifestType: version
-ManifestVersion: 1.12.0
+ManifestVersion: $manifestVersion
 "@
     $files["$identifier.installer.yaml"] = @"
+# yaml-language-server: `$schema=https://aka.ms/winget-manifest.installer.$manifestVersion.schema.json
+
 $common
 InstallerType: wix
 Scope: user
@@ -108,12 +113,14 @@ Installers:
     ProductCode: $(ConvertTo-YamlString $productCode)
     UpgradeCode: $(ConvertTo-YamlString $upgradeCode)
 ManifestType: installer
-ManifestVersion: 1.12.0
+ManifestVersion: $manifestVersion
 "@
     foreach ($locale in @('en-US', 'zh-CN')) {
         $description = if ($locale -eq 'zh-CN') { '轻松导入、切换和管理 Equalizer APO 配置。' } else { 'Import, switch, and manage Equalizer APO profiles.' }
         $manifestType = if ($locale -eq 'en-US') { 'defaultLocale' } else { 'locale' }
         $files["$identifier.locale.$locale.yaml"] = @"
+# yaml-language-server: `$schema=https://aka.ms/winget-manifest.$manifestType.$manifestVersion.schema.json
+
 $common
 PackageLocale: $locale
 Publisher: flowersauce
@@ -130,7 +137,7 @@ Tags:
 - equalizer-apo
 ReleaseNotesUrl: $repository/releases/tag/v$Version
 ManifestType: $manifestType
-ManifestVersion: 1.12.0
+ManifestVersion: $manifestVersion
 "@
         # Moniker belongs only to the defaultLocale schema.
         if ($locale -ne 'en-US') { $files["$identifier.locale.$locale.yaml"] = $files["$identifier.locale.$locale.yaml"] -replace '(?m)^Moniker: eqm\r?\n', '' }
