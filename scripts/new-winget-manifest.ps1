@@ -98,6 +98,9 @@ ManifestVersion: $manifestVersion
 $common
 InstallerType: wix
 Scope: user
+InstallerSwitches:
+  Silent: /qn /norestart
+  SilentWithProgress: /qn /norestart
 UpgradeBehavior: install
 Commands:
 - eqm
