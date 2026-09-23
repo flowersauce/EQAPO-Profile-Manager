@@ -92,4 +92,3 @@ go build -o eqm.exe ./cmd/eqm
 ## 许可
 
 由 [flowersauce](https://github.com/flowersauce) 开发，采用 [MIT License](LICENSE) 开源。欢迎使用、修改和分发，请保留原有版权与许可声明。
-
