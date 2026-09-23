@@ -6,6 +6,7 @@
 | --- | --- |
 | 项目名称 | EQAPO-Profile-Manager |
 | 产品简称 / MSI 显示名 | EQM |
+| MSI Manufacturer / winget Publisher | `flowersauce` |
 | CLI | `eqm` |
 | winget PackageIdentifier | `Flowersauce.EQAPOProfileManager` |
 | 安装目录 | `%LOCALAPPDATA%\Programs\EQM` |
@@ -34,11 +35,44 @@
 
 每次使用新的暂存目录，不读取本地 `config` 或其他用户数据，不自动删除暂存内容，也不覆盖已有同名发布文件。编译与 MSI 打包都成功后才将产物移至 `dist` 顶层。脚本只构建，不安装、不发布、不向 winget 提交。
 
-winget 后续提交使用上述 PackageIdentifier、`InstallerType: wix` 和 `Scope: user`；下载地址与校验值必须对应实际发布的 MSI。当前不生成带占位地址或虚假校验值的 manifest。
+## winget manifest
+
+将最终 MSI 上传到对应 GitHub Release 后，在 Windows PowerShell 7 中运行（无需安装 wingetcreate 或 YAML 模块）：
+
+```powershell
+.\scripts\new-winget-manifest.ps1 -Version 1.0.0
+```
+
+脚本下载 `v<Version>` Release 中的 x64 MSI，只读提取 MSI 元数据并计算 SHA256，核对版本、名称、发布者、架构和 ALLUSERS 属性。输出位于 `dist/winget/manifests/f/Flowersauce/EQAPOProfileManager/<Version>`，包含 version、installer、英文默认描述及中文描述四份 YAML。可通过 `-OutputDirectory` 指定输出根目录；已存在的版本目录不会被覆盖。脚本不构建、不安装、不验证或自动提交 PR，下载失败时不会改用本地安装包。
+
+生成后手动执行：
+
+```powershell
+winget validate --manifest .\dist\winget\manifests\f\Flowersauce\EQAPOProfileManager\1.0.0
+winget install --manifest .\dist\winget\manifests\f\Flowersauce\EQAPOProfileManager\1.0.0 --scope user
+```
+
+完成下述验收后，将生成的版本目录按相同路径放入 `microsoft/winget-pkgs` 的 fork 并发起 PR。不要把下载的 MSI 或整个 `dist` 一并提交。
+
+基于最终发布的 MSI 生成 manifest，不使用占位下载地址或校验值：
+
+- `PackageIdentifier: Flowersauce.EQAPOProfileManager`；前缀大小写无需与 Publisher 相同，后续版本保持标识不变。
+- `PackageName: EQM`、`Publisher: flowersauce`，与系统卸载信息一致；若使用完整项目名作为 PackageName，需通过 `AppsAndFeaturesEntries` 对齐安装记录。
+- 显式填写 `InstallerType: wix` 和 `Scope: user`。
+- 不填写 `InstallerLocale`；生成后检查并移除该字段，包括各 Installers 条目中的值。`PackageLocale` 描述 manifest 文本语言，应正常保留。
+- 下载地址、SHA256、ProductCode 和 AppsAndFeaturesEntries 必须来自同一份最终 MSI，不从另一次构建复制。
+
+提交前手动执行 `winget validate --manifest <目录>`，再在普通权限终端执行 `winget install --manifest <目录> --scope user`，确认无安装 UAC、用户目录和 PATH 正确。若未开启本地 manifest 功能，需先在管理员终端执行一次 `winget settings --enable LocalManifestFiles`；这与 MSI 本身的安装权限无关。
+
+本次首次收录前的 1.0.0 发布整理允许重新打包：先将 `dist` 中旧的同名产物移出输出目录，再执行构建脚本，更新 Release 资源及校验文件后才生成 manifest。已安装旧包的测试环境应先卸载旧包，不以同版本覆盖安装验证升级。后续正式更新递增版本，已提交 manifest 引用的资源保持不变。
+
+参考：[winget manifest 编写与测试](https://github.com/microsoft/winget-pkgs/blob/master/doc/Authoring.md)。
 
 ## 安装、升级与卸载
 
 WiX 使用 `Scope="perUser"`，程序文件写入当前用户目录，注册表组件键位于 HKCU。没有提升权限的自定义操作，也不修改系统 PATH。Windows Installer 自行维护卸载注册信息。
+
+MSI 使用 `Language="0"` 声明语言中立，不限定为英文安装包；这不改变 EQM 根据系统语言切换中英文的行为。参见 [Windows Installer 语言中立声明](https://learn.microsoft.com/windows/win32/msi/localizing-a-windows-installer-package)。
 
 PATH 使用 MSI Environment 表追加 `%LOCALAPPDATA%\Programs\EQM` 对应的绝对路径，`Part="last"`、`System="no"`、`Permanent="no"`。卸载移除该项，保留其他 PATH 项。安装后打开新的终端使用 `eqm`，已有终端可能仍持有旧环境。
 

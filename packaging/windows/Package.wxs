@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="EQM" Manufacturer="flowersauce"
-           Version="$(var.MsiVersion)" Language="1033" Scope="perUser"
+           Version="$(var.MsiVersion)" Language="0" Scope="perUser"
            UpgradeCode="F17D74F4-1E0C-4D8C-A9DC-932088C13821">
     <SummaryInformation Description="EQAPO-Profile-Manager" />
     <MajorUpgrade Schedule="afterInstallInitialize"

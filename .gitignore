@@ -17,8 +17,12 @@ go.work
 go.work.sum
 
 # Editor / OS noise
+.vscode/
+.idea/
 .DS_Store
 Thumbs.db
 *.swp
+*.swo
+*~
 *.tmp
 *.log
