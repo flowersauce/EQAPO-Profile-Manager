@@ -19,7 +19,8 @@ $identifier = 'Flowersauce.EQAPOProfileManager'
 $manifestVersion = '1.12.0'
 $repository = 'https://github.com/flowersauce/EQAPO-Profile-Manager'
 $installerUrl = "$repository/releases/download/v$Version/EQM-$Version-windows-x64.msi"
-$outputRoot = [IO.Path]::GetFullPath($OutputDirectory)
+# Resolve relative paths against PowerShell's location, not the process directory.
+$outputRoot = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
 $manifestDirectory = Join-Path $outputRoot "manifests/f/Flowersauce/EQAPOProfileManager/$Version"
 if (Test-Path -LiteralPath $manifestDirectory) {
     throw "Output already exists: $manifestDirectory. Move the previous manifest directory before regenerating."
