@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="EQM" Manufacturer="flowersauce"
+           Version="$(var.MsiVersion)" Language="1033" Scope="perUser"
+           UpgradeCode="F17D74F4-1E0C-4D8C-A9DC-932088C13821">
+    <SummaryInformation Description="EQAPO-Profile-Manager" />
+    <MajorUpgrade Schedule="afterInstallInitialize"
+                  DowngradeErrorMessage="A newer version of EQM is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/flowersauce/EQAPO-Profile-Manager" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="EQM_PACKAGE_IDENTIFIER" Value="Flowersauce.EQAPOProfileManager" />
+    <Launch Condition="NOT ALLUSERS" Message="EQM supports installation for the current user only." />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="UserProgramsFolder" Name="Programs">
+        <Directory Id="EqmInstallFolder" Name="EQM">
+          <!-- Files with a registry key path require an explicit, stable component GUID. -->
+          <Component Id="EqmExecutable" Guid="8C837B39-F7CA-453A-83D2-63A2DBAD2B47">
+            <File Id="EqmExe" Source="$(var.SourceDir)\eqm.exe" />
+            <!-- HKCU key path keeps this component strictly per-user. -->
+            <RegistryValue Root="HKCU" Key="Software\flowersauce\EQM"
+                           Name="InstallDir" Type="string" Value="[EqmInstallFolder]" KeyPath="yes" />
+            <Environment Id="EqmUserPath" Name="PATH" Action="set" Part="last"
+                         Value="[LocalAppDataFolder]Programs\EQM" System="no" Permanent="no" />
+            <RemoveFolder Id="RemoveEqmInstallFolder" On="uninstall" />
+            <!-- RemoveFolder only removes an empty directory. -->
+            <RemoveFolder Id="RemoveEmptyUserProgramsFolder" Directory="UserProgramsFolder" On="uninstall" />
+          </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+    <Feature Id="EQM" Title="EQM" Level="1">
+      <ComponentRef Id="EqmExecutable" />
+    </Feature>
+  </Package>
+</Wix>

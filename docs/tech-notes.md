@@ -1,477 +1,241 @@
-# 实现备注（不参与方案讨论）
+# 实现备注
 
-本文件保存「怎么做」层面的细节，供真正动手时参考。
-产品层面的定义见 `docs/design.md`，待定问题见 `docs/open-questions.md`。
+产品行为以 `docs/design.md` 为准。本文记录模块边界、文件处理、终端适配和验证方式。
 
----
+项目名称、APO 托管标记和 Go module 统一使用 EQAPO-Profile-Manager。裸 `eqm` 的问候通过 `os/user.Current` 获取当前账户用户名，去掉 Windows 域名前缀并过滤控制字符。
 
-## 1. 技术选型
+## 1. 技术选型与模块边界
 
-| 用途 | 选择 | 说明 |
-| --- | --- | --- |
-| 语言 | Go（当前最新稳定版 1.27.1；`go.mod` 记录实际版本） | 单文件静态 exe，`CGO_ENABLED=0` |
-| 行内界面 | `bubbletea` **v2**（模块路径 `charm.land/bubbletea/v2`，要求 Go ≥1.25）+ `lipgloss` | 默认行内渲染，非全屏；按键、raw mode、resize、帧差分都由框架处理 |
-| JSON | `encoding/json`（stdlib） | `config.json` / `profile.json` |
-| 参数解析 | `flag`（stdlib）+ 手写子命令分发 | 不引入 cobra |
-| 数据目录 | `init` 时由用户指定，默认 `os.UserCacheDir()`（Windows 上即 `%LocalAppData%`），可被 `EQM_HOME` 覆盖 | |
-| 路径 / Unicode | `os` / `path/filepath`（stdlib） | Windows 上 stdlib 内部走 UTF-16 |
-| 注册表探测 | `golang.org/x/sys/windows/registry` | 只读 |
-| 控制台代码页 | `golang.org/x/sys/windows` 的 `SetConsoleOutputCP` | 另有 `MoveFileEx` 与 `MOVEFILE_*` |
-| 测试 / 格式化 | `testing` / `gofmt` / `go vet` | 零配置 |
-| 界面语言 | 系统语言用 `x/sys/windows` 的 `GetUserPreferredUILanguages`；文案用 `//go:embed` 内嵌中英两份 map | 见 §13 |
+Go 单文件 Windows 可执行程序；标准库负责命令分发、JSON 与文件操作，不引入 Cobra。行内 UI 使用 Bubble Tea v2、Bubbles textinput、Lipgloss；显示列宽使用 `github.com/charmbracelet/x/ansi`；必要的 Windows API 使用 `golang.org/x/sys/windows`。依赖版本固定在 `go.mod` 与 `go.sum`，最低 Go 版本为 1.25.0。
 
-取舍：`bubbletea` 会带进一串传递依赖（`termenv`、`go-runewidth`、`cancelreader` 等），
-这是本项目唯一的依赖树，换来的是 Windows 控制台按键、raw mode、resize、帧差分全部现成。
-
-不引入：原生文件对话框绑定、cobra / urfave-cli、日志框架、数据库、GUI 框架。
-
----
-
-## 2. 代码结构
+代码结构：
 
 ```text
-AutoEQ-APO-Manager/
-├── go.mod / go.sum
-├── docs/
-│   ├── design.md            # 产品方案
-│   ├── tech-notes.md        # 本文件
-│   └── open-questions.md
-├── cmd/eqm/main.go          # 入口：参数分发
-├── internal/
-│   ├── core/                # 纯逻辑，不依赖终端，可单测
-│   │   ├── appconfig.go     # config.json 读写与默认值
-│   │   ├── profile.go       # Profile 元数据模型
-│   │   ├── store.go         # 库：列举 / 查找 / 导入 / 删除 / 重名处理
-│   │   ├── eqparser.go      # 格式识别与轻量校验（只读不改）
-│   │   ├── naming.go        # 文件名 → 显示名 / 目录 slug
-│   │   ├── apobridge.go     # 托管 config.txt / 写 eqm\current.txt / 备份 / 覆盖替换
-│   │   ├── render.go        # 「Profile 列表 → []string」纯函数，交互与 --plain 共用
-│   │   └── paths.go         # 数据目录与 APO 目录解析（平台判断集中处）
-│   ├── ui/                  # 行内交互界面
-│   │   ├── select.go        # Model：items/cursor/keymap/filter
-│   │   ├── confirm.go       # Y/n 单键确认
-│   │   ├── input.go         # 单行输入 + Tab 补全 + 粘贴 chip
-│   │   ├── paste.go         # 解析拖拽/粘贴文本 → 候选路径（纯函数，可单测）
-│   │   ├── styles.go        # lipgloss 样式与按列宽截断
-│   │   └── runner.go        # TTY 判断与降级为纯文本输出
-│   └── cli/
-│       ├── commands.go      # switch / import / remove / init（+ show）
-│       └── dispatch.go      # flag.NewFlagSet 装配
-└── testdata/fixtures/       # 真实 AutoEQ 样例：GraphicEQ / ParametricEQ / BOM / LF / 乱码
+cmd/eqm/             入口、退出码
+internal/cli/        命令分发、业务步骤编排、输出
+internal/core/       配置扫描、导入、改名、删除、初始化
+internal/apo/        托管区域解析与 Include 更新
+internal/settings/   便携/安装模式路径解析、安装根目录持久化
+internal/ui/         单一生命周期向导、输入与选择控件
+internal/platform/   Windows 文件替换、文件身份、UAC、系统语言与终端适配
+internal/i18n/       中英文资源与显示语言映射
+internal/fault/      结构化错误、退出码与重试边界
 ```
 
-约束：
+按实际需要建立模块，避免空接口和通用框架。core 不依赖 UI，UI 不包含文件管理规则；业务校验返回结构化错误，由 CLI 映射为当前步骤的错误或最终失败结果。
 
-- `internal/core` 不依赖终端库，不读写 `os.Stdin` / `os.Stdout`，函数只接受显式路径参数。
-- `internal/ui` 只做「把一组字符串渲染成可选择的列表」，业务规则不在这里。
-- 平台判断只允许出现在 `core/paths.go` 与 `ui/runner.go`。
-- bubbletea 的 `Model` 只持有字符串 / 整数状态，不持有文件句柄。
-
----
-
-## 3. 数据文件与目录
+## 2. 数据与状态
 
 ```text
-<存放目录>\                            # init 时由用户指定；默认 %LOCALAPPDATA%\AutoEQ-APO-Manager；可用 EQM_HOME 覆盖
-├── config.json
-└── profiles/
-    ├── philips-shp9500/
-    │   ├── profile.json
-    │   └── eq.txt                     # AutoEQ 原始内容，原样保存
-    └── moondrop-aria-2/
-
-<APO config 目录>\                     # 从注册表 ConfigPath 读，或用户指定
-├── config.txt                         # eqm 托管的入口，固定不变
-└── eqm\
-    └── current.txt                    # 指向当前生效配置，切换时重写
+<APO 根目录>\config\
+├── config.txt
+└── eqm-profiles\
+    ├── philips-shp9500.txt
+    └── moondrop-aria-2.txt
 ```
 
-`config.json`：
+- 配置清单来自 `eqm-profiles` 的直接子文件，只纳入后缀为 `.txt` 的普通文件，不跟随符号链接或重解析点到目录外。
+- 显示名为去掉最后一个 `.txt` 后的文件名；保留 Unicode、空格与大小写，不生成 slug。
+- 文件名冲突按大小写不敏感判断；排序采用同一比较规则，并以原文件名作为稳定次级键。
+- 不建立 `profiles.json`、配置 ID、独立显示名、导入时间或来源索引。
+- 不创建 `eqm\current.txt`；不持久化重复的 `current` 字段。
+- 当前选择仅从 `config.txt` 托管区域解析；注释的 Include 或空的 `# Include:` 表示 `None`。
+
+设置位置通过 `settings.PathFor` 解析：exe 同级存在普通文件 `portable.flag` 时使用 `<exe 目录>\config\config.json`，否则使用原用户的 LocalAppData 下 `EQM\config.json`。异常标记或访问错误不能静默回退；不使用工作目录推断模式。设置格式：
 
 ```json
 {
   "version": 1,
-  "apo_config_dir": "D:/APP/Tools/EqualizerAPO/config",
-  "current": "philips-shp9500"
+  "apo_root": "C:\\Program Files\\EqualizerAPO"
 }
 ```
 
-（原来的 `runtime_mode` 字段已取消：指针文件必须在 APO 的 config 目录树内才能触发自动重载，
-见 4.3。）
+保存绝对、规范化的安装根路径。设置缺失视为未初始化；无效 JSON、未知版本或非法路径明确报错，不静默覆盖。`init` 可重新输入并修复设置。配置路径不因权限不足而回退；若 APO 已提交而设置保存失败，保留部分完成反馈，不重放整个初始化。未提供公开的配置目录环境变量或自动迁移；PATH 只由 MSI 管理。
 
-`profile.json`：
+## 3. 命令分发与输出
 
-```json
-{
-  "name": "Philips SHP9500",
-  "format": "GraphicEQ",
-  "source": "AutoEQ",
-  "file": "eq.txt",
-  "imported_at": "2026-09-22T11:25:00Z",
-  "source_filename": "Philips SHP9500 GraphicEq.txt"
-}
-```
+只接受零参数的裸 `eqm`，或恰好一个已知子命令：`switch`、`list`、`import`、`remove`、`show`、`rename`、`init`。额外参数及所有 flag 均报错，提示运行裸 `eqm`。
 
-约定：JSON 里的路径统一 UTF-8 + 正斜杠；写出的文本文件用 UTF-8 无 BOM + CRLF；
-读入时容忍 BOM、LF/CRLF 与行尾空白。
+- 裸 `eqm` 和 `list` 不要求 TTY，且绝不写文件。
+- 其余命令要求 stdin、stdout 均为终端；检查在读取输入或修改状态之前完成，失败立即退出。
+- `show` 完成选择并退出动态 UI 后，将配置原始内容写到 stdout；向导问题、结果及错误走 stderr，避免混入配置正文。首版不提供重定向下的交互模式。
+- 其他命令的信息结果走 stdout，交互与错误走 stderr；UI 输出目标必须为终端，否则立即报错。
+- 裸 `eqm` 未初始化时仍正常展示版本、状态和命令概览；其他业务命令要求初始化完成。
 
----
+退出码：
 
-## 4. Equalizer APO 接入
-
-### 4.1 托管 `config.txt`
-
-```txt
-# 此文件由 AutoEQ-APO-Manager 自动管理，请勿手动修改。
-# Managed by AutoEQ-APO-Manager. Do not edit manually.
-Include: eqm\current.txt
-```
-
-首次接管：
-
-1. 不存在 → 直接创建。
-2. 已托管（含托管标记）→ 直接覆盖。
-3. 未托管 → 先备份为 `config.txt.eqm.bak`，再询问是否把原内容导入为一个 Profile
-   （默认名 `Existing config`），最后写入托管内容。
-
-### 4.2 `eqm\current.txt`（放在 APO 的 config 目录树内）
-
-切换时写入：
-
-```txt
-# 此文件由 AutoEQ-APO-Manager 自动管理，请勿手动修改。
-Include: D:\EQM\profiles\philips-shp9500\eq.txt
-```
-
-原声模式写：
-
-```txt
-# Original
-```
-
-### 4.3 为什么这个指针文件必须在 APO 的 config 目录里（已核实）
-
-Equalizer APO 的配置重载机制（源码 `FilterEngine::initialize` / `notificationThread`）：
-
-- 它用 `FindFirstChangeNotificationW(configPath, true, FILE_NOTIFY_CHANGE_FILE_NAME |
-  FILE_NOTIFY_CHANGE_LAST_WRITE)` 监视 **`ConfigPath` 整棵子树**（第二个参数为 `true`
-  表示递归），有约 10 ms 的去抖。
-- 一旦有变化就 `loadConfig()` **整份重读**，包括所有 `Include:`。
-- **关键限制**：监视范围仅限 `ConfigPath` 子树。`Include:` 指向目录外的文件，
-  改动它**不会**触发自动重载。
-
-因此：
-
-- `eqm\current.txt` 必须放在 `ConfigPath` 里，它每次切换都会变，是触发重载的关键；
-- 指向库里的 `eq.txt` 用**绝对路径**没问题 —— 只要指针文件本身变了，APO 就会整份重读，
-  顺带读到目录外的 `eq.txt`；
-- 所以切换流程 = 只重写 `eqm\current.txt` 一个文件。
-
-**代价**：需要写 APO 的 config 目录。默认安装位于 `C:\Program Files\EqualizerAPO\config`，
-意味着常用操作需要管理员权限（APO 自带的编辑器也是这个处境）。`init` 会把
-「config 目录能否写入」当作必检项，不能写就当场说明。
-
-### 4.4 `Include:` 的其他行为（已核实）
-
-| 事实 | 影响 |
+| 代码 | 含义 |
 | --- | --- |
-| 语法是 `Include: <路径>`，**只去掉行首空白，不解析引号** | 路径含空格可以直接写，不要加引号；写文件时**不要带行尾空格**（会被当作路径的一部分） |
-| 相对路径按**包含该行的文件所在目录**解析（不是根 config 目录） | `config.txt` 里的 `Include: eqm\current.txt` 指向 `<ConfigPath>\eqm\current.txt` |
-| **支持嵌套 Include**（被包含的文件里还能有 `Include:`），深度上限 `RECURSION_LIMIT = 100`，超限静默跳过；**没有环检测** | 我们只用 2 层（`config.txt` → `eqm\current.txt` → 库里的 `eq.txt`），远低于上限；但仍应避免写出会自我引用的文件 |
-| 路径用 `CreateFileW` 打开，未加 `\\?\` 前缀，相对路径在 `MAX_PATH`（260）缓冲里拼 | 路径总长应保持在 260 字符内 |
-| 行编码：先按 UTF-8 解，出现替换字符 `U+FFFD` 再按系统 ANSI 解码；**不支持 UTF-16** | 我们写 UTF-8（无 BOM）即可；含非 ASCII 的库路径有较大机会正常工作，但仍列在待实测里 |
-| **没有 BOM 剥离逻辑** | 带 BOM 时 BOM 会粘在第一行的命令名上，导致该行被静默忽略。所以**必须写无 BOM 的 UTF-8** |
-| 无法识别的行、未知命令、不匹配 `命令: 参数` 的行都被静默忽略 | 出错时不会有任何提示，写文件要自己保证正确 |
-| 文件大小与行长无限制 | 不需要担心 GraphicEQ 那种长行 |
+| 0 | 成功，含裸命令显示未初始化状态 |
+| 1 | 用法、访问或执行失败 |
+| 2 | 用户取消，含覆盖确认选择否 |
+| 3 | 未初始化或管理配置损坏 |
+| 4 | 导入格式不支持 |
 
-### 4.5 写入可靠性
+已完成导入后，拒绝或取消删除源文件仍按导入成功处理；删除源文件失败返回执行失败，但必须明确导入已经完成。
 
-1. 在同一目录写临时文件（如 `current.txt.eqm-tmp`，不用 `*.txt` 后缀，避免被 APO 的文件变化监视当成真配置）。
-2. 用 `os.Rename` 覆盖目标（Windows 上底层是 `MoveFileEx(..., MOVEFILE_REPLACE_EXISTING)`）。
-   注意 `MoveFileEx` 不承诺原子性，目标只是「避免 APO 读到半截内容」。
-3. 若实测仍会被读到中间状态，改用 `windows.MoveFileEx` + `MOVEFILE_WRITE_THROUGH`。
+## 4. 初始化与托管区域
 
-不做：文件锁、修改权限、后台守护进程、实时监控。
+`init` 使用 `Step.Placeholder` 显示默认根目录，不设置 `Initial`。空值按 Enter 将默认值作为本次提交和完成态答案，Tab 仅接受默认值供继续编辑。空值占位期间不查询行内补全候选，避免工作目录候选覆盖默认路径；输入后恢复正常补全。
 
-### 4.6 探测 APO 位置
+### 4.1 校验与提交
 
-`init` 里让用户填的是 APO 的**安装根目录或 config 目录，两者都接受**，程序自己判断：
+`init` 只输入 APO 安装根目录，固定使用其 `config` 子目录，不探测注册表。已有设置提供默认值；首次默认 `C:\Program Files\EqualizerAPO`。
 
-1. 环境变量 `EQM_APO_CONFIG_DIR`；
-2. 注册表 `HKLM\SOFTWARE\EqualizerAPO`（只读，已核实键名与值名）：
-   `ConfigPath` 就是 config 目录（APO 读的是 `<ConfigPath>\config.txt`），
-   另有 `InstallPath`、`EnableTrace`；读取要用 64 位视图（`KEY_WOW64_64KEY`）；
-3. 常见路径如 `C:\Program Files\EqualizerAPO`；
-4. 用户手输。
+确认前只读取目录、文件属性和可获取的访问权限信息，不创建探针或临时文件。权限预检不能保证后续写入成功，确认后仍须处理真实的创建、写入与替换错误。普通错误留在当前步骤；可安全重试的提交遇到访问拒绝时，由 CLI 启动后台管理员工作进程，向导保持等待并接收操作结果。
 
-归一化与校验规则（全部在 `init` 输入当下完成）：
+提交前准备完整的新内容；确认后创建所需目录、完成 APO 文件写入，再保存安装根设置。设置保存失败应报告已完成的 APO 修改，使用户可重试 `init`，不能报告整体成功。已有目录和用户文件不因失败被批量删除。
 
-- 输入目录下直接有 `config.txt` → 它就是 config 目录；
-- 输入目录下有 `config\config.txt` → 取它的 `config` 子目录；
-- 两者都不满足 → 报错并让用户重新输入；
-- 路径含非 ASCII 字符 → 警告（可能让 APO 读不到配置）并建议换路径；
-- `config.txt` 不可写 → 提示需要管理员权限。
+同目录重复初始化保留有效选择；切换安装目录读取目标目录自身状态，不迁移 EQ 文件，不清理旧目录。
 
-另外 `init` 第二项是 **eqm 自己的存放目录**（默认 `%LOCALAPPDATA%\AutoEQ-APO-Manager`），
-用户可自定义。它只影响 `profiles/` 与 `config.json` 的位置（`eqm\current.txt` 在 APO 那侧），
-因此改存放目录只需要重跑一次 `init`（重新生成 `config.txt` 里的 `Include:` 行）。
+### 4.2 标记与解析
 
-### 4.7 自愈规则
-
-以下情况不报错、不问用户，直接修正并打一行提示（对应 `design.md` 第 6 节原则 6）：
-
-| 情况 | 处理 |
-| --- | --- |
-| `current` 指向的配置目录或 `eq.txt` 不存在 | 将 `current` 置为 `null`，把 `eqm\current.txt` 重写为 `# Original`，提示「配置 X 的文件已丢失，已回到原声」 |
-| `config.txt` 被用户改乱（缺少托管标记或 `Include:` 行） | 重新生成托管内容 |
-| `config.json` 缺失但存放目录里已有 `profiles/` | 提示未初始化，引导重跑 `init`（不静默重建） |
-| 导入时文档夹的源文件已被删 | 不影响（内容已存入库） |
-
-`doctor` / `check` 不再作为独立命令；它的职责已经拆到上面（`init` 当场校验 + 自愈）。
-「怀疑出问题」时的做法是重跑 `eqm init`。
-
----
-
-## 5. 格式识别与校验
-
-| 判定 | 条件 | 结果 |
-| --- | --- | --- |
-| GraphicEQ | 存在 `GraphicEQ:` 行且其后有 `频率 增益; ...` 数据 | `format = "GraphicEQ"` |
-| ParametricEQ | 存在匹配 `Filter\s*\d*\s*:` 的行 | `format = "ParametricEQ"` |
-| 两者都有 | 优先 ParametricEQ，并记一条警告 | 取一 |
-| 都没有 | 拒绝导入 | 见下 |
-
-容忍：任意数量 `Preamp:` 行、`#` 注释、空行；关键字不区分大小写。
-
-只做「是不是受支持的配置」加结构性检查；不校验增益范围与滤波器合法性，不重算参数，
-**不做自动修复**。
-
-拒绝时输出：
+采用 `design.md` 中的独立 BEGIN / END 标记，外围分隔线仅用于阅读。首次创建的有效托管内容为：
 
 ```text
-无法导入该文件。
+# ------------------------------------------------------------
+# EQAPO-Profile-Manager BEGIN
+# Include:
+# EQAPO-Profile-Manager END
+# ------------------------------------------------------------
 
-未检测到受支持的 Equalizer APO AutoEQ 配置。
-
-支持：
-- GraphicEQ
-- ParametricEQ
+# Original config.txt
+# <original line 1>
+# <original line 2>
 ```
 
----
+首次接管为原文件每一行增加 `# ` 前缀，包含原来的注释行和空行；不用 `# | `，不删除原内容。不建立额外的持久备份文件；原内容之后不追加页脚，以保留最后一行有无换行的状态。
 
-## 6. 命名与 slug
+解析器应返回托管区的字节边界、Include 的启用状态和文件名。只有唯一、完整且位于文件开头（允许 BOM）的管理区可以修改。重复标记、未闭合标记、多条 Include、未知有效指令、越界路径均视为损坏并停止写入。只接受 `eqm-profiles\<单个文件名>.txt`，禁止绝对路径、父目录跳转及多级子目录。
 
-显示名推断（去掉扩展名后剥掉结尾的格式标记，不区分大小写，允许空格/下划线/连字符）：
+重复初始化、切换及自愈只替换所需托管内容，区域之外的字节保持不变。不要以搜索任意 Include 行或品牌字符串的方式判定托管状态。
+
+### 4.3 编码
+
+生成文本使用 UTF-8；新文件使用 CRLF。处理现有 `config.txt` 时保留可识别的 BOM 和换行形式。首版接管支持 UTF-8（含 BOM）；遇到不支持的编码应在写入前报错，不能以替换字符解码后覆盖。Unicode 路径支持与文件内容编码是两个独立问题。
+
+### 4.4 切换与 None
+
+启用配置：
 
 ```text
-Philips SHP9500 GraphicEq.txt     → Philips SHP9500
-Moondrop Aria 2 GraphicEq.txt     → Moondrop Aria 2
-Philips SHP9500 ParametricEQ.txt  → Philips SHP9500
+Include: eqm-profiles\philips-shp9500.txt
 ```
 
-剥完为空或过短时询问用户。
-
-目录 slug：转小写；ASCII 字母数字与 `.`、`_` 保留；其余折叠为单个 `-`；去首尾 `-`；
-限长 64；冲突追加 `-2`、`-3`；slug 为空时退化为 `profile-<8位短哈希>`。
-slug 只作为唯一标识，不要求与显示名一致。
-
-重名比较的是显示名（大小写不敏感），默认不静默覆盖，给出「覆盖 / 重命名导入 / 取消」。
-
----
-
-## 7. 行内界面实现要点
-
-### 7.1 形态
-
-- 提示渲染在滚动记录里，**不设 `View.AltScreen = true`**（一旦开启，`tea.Println` 也会失效）。
-- 每一行都按终端宽度截断，绝不产生自动换行（否则重绘行数算错，是这类界面最典型的 bug）。
-- 不画边框，只有「选中标记 + 文本」。
-- 收尾必须显式：退出时返回空 `View()`，或 `tea.Sequence(tea.ClearScreen, tea.Quit)`，
-  结果用 `tea.Println(...)` 写出去（依赖框架自动清屏是不可靠的）。
-
-### 7.2 `select` 组件
-
-| 部分 | 内容 |
-| --- | --- |
-| Model | `items []string`、`cursor int`、`filter string`、`chosen int`（-1 = 取消）、`width int` |
-| Update | `up`/`k`、`down`/`j`、`home`/`g`、`end`/`G`、`enter`、`esc`/`ctrl+c`、数字键、可打印字符（过滤）、`backspace` |
-| View | 前缀 `❯ ` 标当前项，`*` 标生效项；按 `width` 截断 |
-| 结束 | `enter` → `chosen = cursor` + `tea.Quit`；`esc` → `chosen = -1` + `tea.Quit` |
-
-- 列表内容由 `core/render.go` 的纯函数产生，`--plain` 与交互模式共用同一份行。
-- `items` / `cursor` / `filter` / `chosen` 可作为可读字段供测试断言。
-
-### 7.3 非交互降级（`ui/runner.go`）
-
-```go
-func interactive() bool {
-    fi, err := os.Stdout.Stat()
-    return err == nil && fi.Mode()&os.ModeCharDevice != 0
-}
-```
-
-- 为假或 `TERM=dumb`：能纯输出就纯输出（`switch` / `switch --plain` / `show`，退出码 0）；
-  确实缺必需参数时（管道里的 `import` / `switch <名字>`）报错说明并退出 1。
-- 官方形态是 `term.IsTerminal(os.Stdout.Fd())`，非 TTY 时加 `tea.WithoutRenderer()` 或
-  `WithInput(nil)`；我们用更彻底的版本，非 TTY 时根本不进 bubbletea。
-- 宽度来自 `tea.WindowSizeMsg`；测试或非交互场景可用 `tea.WithWindowSize(w, h)`。
-
-### 7.4 路径输入与粘贴 chip
-
-- 收到 `tea.PasteMsg` 后：去掉 NUL 字符 → 按终端类型解析候选路径 → `os.Stat` 校验。
-- 命中文件 → 存为附件（只允许 1 个），字段显示 `[<basename>]`，内部保存完整路径。
-- 未命中 → 当普通文本插入，并给一行提示（不静默失败）。
-- chip 用 lipgloss 渲染，超长名按列宽截断补 `…`，完整路径显示在提示行。
-- 解析器必须同时接受带引号与裸路径（细节见 §11）。
-
----
-
-## 8. 命令与退出码
+禁用既有选择：
 
 ```text
-eqm                    概览 + 帮助（当前配置、两个目录、命令列表）
-eqm switch [<name>|<index>|original]   缺参数时列出配置并可选；带参数直接切
-eqm import [<file>] [--name <name>] [--no-apply] [--move]
-eqm remove [<name>] [--yes]
-eqm init               设置并校验两个目录（APO 位置 + eqm 存放位置）
-eqm show <name>        （可选）看某条配置的内容
-eqm --version / --help
+# Include: eqm-profiles\philips-shp9500.txt
 ```
 
-- `--plain`（或非 TTY）时 `switch` 只输出列表，不读键盘。
-- 列表内容由 `core/render.go` 统一产生，交互与 `--plain` 共用同一份行。
+尚无选择：`# Include:`。None 不对应虚拟 EQ 文件。已选中同一有效项时不写文件；重新启用此前注释的项必须移除注释。切换更新 `config.txt` 本身，覆写当前 EQ 更新对应配置文件；APO 实际重载效果列入 Windows 手工验收，不在文档中宣称已验证。
 
-| 退出码 | 含义 |
-| --- | --- |
-| 0 | 成功 |
-| 1 | 失败（用法错误、缺参数、文件访问失败） |
-| 2 | 用户取消（`Esc` / `Ctrl+C`） |
-| 3 | 未初始化 / 配置损坏 |
-| 4 | 导入文件格式不受支持 |
+## 5. 配置操作
 
-- 正常输出写 stdout，错误写 stderr；参数错误时补一段用法提示。
-- 颜色只在 stdout 是终端时启用；`NO_COLOR`（任意值）关闭。
-- 名字匹配：先精确（大小写不敏感），再唯一前缀；歧义时报错并列出候选。
+### 5.1 路径与名称
 
----
+路径输入接受手输、粘贴与终端拖入的单一路径，处理成对外层引号；不能简单按空格拆分 Windows 路径。多个独立路径明确报错。Tab 按当前目录补全，`init` 补全目录，`import` 同时支持目录导航与文件选择。`Suggest` 只预览下一次 Tab 的结果，不推进候选循环；UI 经 100 ms 防抖异步查询，按请求版本丢弃过期结果，仅在光标末尾显示候选后缀。预览失败静默隐藏，不打断输入；实际 Tab 失败仍明确反馈。
 
-## 9. 测试与常用命令
+目标文件名必须为合法 Windows 单个文件名：拒绝空名、保留设备名、路径分隔符、控制字符、非法字符及结尾空格或句点。显示名 `None` 保留。文件系统冲突在提交前再次检查，不只依赖列表快照。
 
-```bash
-go build ./...                       # 编译
-go test ./...                        # 单测
-go vet ./... && gofmt -l .           # 静态检查与格式
-GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "-s -w" -o eqm.exe ./cmd/eqm
+### 5.2 导入
+
+流程：路径输入 → 读取原始字节与格式检查 → 文件名冲突检查 → 必要的覆盖确认 → 写入目标 → 可选删除源文件。
+
+仅接受 `.txt` 文件。识别时忽略 UTF-8 BOM、空行及注释，使用 GraphicEQ / ParametricEQ 的有效指令行特征，而非在注释或任意文本中搜索关键词。只做轻量格式识别，不声称完整验证 APO 语法，不修改参数。当前接受 Preamp、GraphicEQ 和 ON 状态的 PK/LS/HS/LSC/HSC Filter 指令，至少需要一条 GraphicEQ 或 Filter；拒绝其他有效指令。正反例见 `internal/core/store_test.go`，写入始终使用原始字节。
+
+- 覆盖保留既有文件名及大小写；拒绝覆盖或取消时不写目标，不生成编号副本。
+- 使用文件身份检查源与目标相同的情况，不能只比较字符串路径；同一文件或其硬链接拒绝导入。
+- 导入不改变当前选择；覆盖当前配置的内容会影响其实际 EQ。
+- 只有目标提交成功后才询问删除源文件；确认前核对源文件未被替换或更改，变化时保留源文件并说明。
+- 删除源文件是后续独立动作，不回滚已经成功的导入。
+
+### 5.3 列表、改名与删除
+
+列表扫描失败明确报错，不能伪装为空列表。没有配置时按设计输出简短结果，`switch` 保留 None。
+
+改名输入只编辑主文件名，固定保留 `.txt`。重名错误清空输入，其他校验错误保留输入。原名提交视为无变化；仅改大小写允许，使用 Windows `MoveFileEx` 且不设置替换已有目标的标志，避免覆盖确认后新出现的文件。
+
+改名当前文件时同步改写托管 Include；注释引用也更新且保持禁用。若第二步失败，尝试恢复旧文件名；恢复失败必须说明磁盘状态与恢复路径。
+
+删除当前配置前先准备 None 内容，提交时先禁用引用，再删除文件，避免留下有效的悬空引用。删除失败时尝试恢复先前引用；不能恢复时明确说明文件仍在但当前为 None。成功后只输出一条删除结果，不额外弹出切换提示。
+
+## 6. 自愈与写入可靠性
+
+遵循 `design.md` §8：只读命令只将丢失引用映射为 None；修改命令在用户提交后才执行修复。仅“文件不存在”触发自愈，访问拒绝、I/O 失败及管理区损坏必须报错。自愈写入失败应终止依赖它的后续操作。已完成自愈但后续操作失败时，说明当前为 None 并结束本次命令，避免复用旧快照重试。
+
+单文件变更采用同目录临时文件写入完整内容、关闭后替换目标的方式；结合 Windows 替换语义实现，不先删除原文件。处理替换失败并清理本次临时文件，保留原数据。跨文件操作不是原子事务，应按上文顺序提交，并提供失败后的明确状态。
+
+修改命令使用同一 APO config 目录范围的进程间互斥，持锁覆盖重新读取、检查和提交，不在等待用户输入时长时间持锁。并发操作占用时提示稍后重试。提交前检查被修改文件与读取快照一致；发现外部修改则停止，避免覆盖用户编辑。此检查不能杜绝非协作程序在最后时刻写入，不宣称支持无损并发编辑。
+
+## 7. 行内向导
+
+一个命令只启动一个向导 Program，Model 保存当前步骤、完成步骤快照、当前输入、错误、终端宽度与最终结果。CLI 编排业务流程，不能每次输入或确认都启动独立 Program。
+
+完成步骤只输出一次到静态滚动记录；动态 View 只负责当前步骤。不把所有历史完成态反复放入可擦除 View。使用 Bubble Tea `Println` 将完成步骤移出动态 View；文本编辑由 Bubbles 负责，输入视口和光标按显示列宽计算。
+
+- 提交后把 `✓ 问题 答案` 固化，再显示下一步，不重复输出摘要。
+- 取消清除未完成动态区域，保留完成步骤，并输出一行取消结果。
+- 输入、选择、确认共享缩进、提示、错误与完成态样式。
+- 确认及带 `Options` 的选择标题使用 `?`，文本输入标题使用 `>`；`Step.Hint` 在标题和输入之间显示 `^` 提示，光标按提示行数与显示列宽定位，输入用 `:`。底部帮助也以 `^` 开头。
+- `Option.Current` 独立携带已应用状态，渲染为绿色 `✓`；选择光标仍为青色 `>`，不向 Label 拼接“当前”文案。
+- 选择支持方向键、`j/k`、Enter、Esc；Ctrl+C 取消；确认不接受隐藏 `y/n`。
+- 一般错误保留输入和焦点；改名重名按设计清空。错误使用 `✗`，取消与 `fault.Warning` 使用 `!`。工作进程响应保留警告级别，UAC 状态通过 Notice 消息进入当前向导，不直接向动态区域打印。
+- 不进入 Alt Screen，不使用边框、动画或 RGB 色。
+- `internal/ui/theme.go` 统一 ANSI 语义色：青色焦点、蓝色链接、紫色输入标记与答案、绿色已应用与成功、黄色警告或取消、灰色帮助、红色错误；问题和分组标题加粗。裸 `eqm` 页的普通信息不着色，仅链接、子命令及无信息提示使用语义色，树形线和分隔符弱化为灰色。
+- 裸 `eqm` 按 `design.md` §9.5 渲染：共用树形条目规则，末项使用 `└`；标签宽度通过 `ansi.StringWidth` 计算，颜色使用同一主题。关于中的作者与仓库地址对应 LICENSE 与项目 remote；版本由 `cmd/eqm/main.go` 的 `version` 提供。输出颜色按实际 writer、stdout 终端状态与 `NO_COLOR` 判断。
+- stdout 或实际 UI 输出目标不是终端，或设置了 `NO_COLOR`（含空值）时，不输出颜色 SGR；非交互输出不产生光标控制序列。
+- 显示宽度按终端列计算；中文、宽字符及窗口缩放不得导致动态区域擦除错位。截断只影响显示，不改变路径或文件名值。
+- 粘贴通过终端输入处理，不为“粘贴支持”另行读取系统剪贴板。
+
+## 8. 版本、打包与验证
+
+默认版本为 `1.0.0`，正式发布使用三段数字版本。构建时可通过 `-ldflags "-X main.version=1.0.1"` 覆盖；展示值不另加 `v` 前缀。MSI 使用独立、单调递增的三段数字版本，不能直接使用带 preview 后缀的 CLI 版本。发布入口为 `scripts/build-release.ps1`，WiX 定义位于 `packaging/windows/Package.wxs`；详见 `docs/windows-release.md`。
+
+必要的验证用例：
+
+- 首次接管、重复初始化、原内容保留、None 与有效 Include 往返、损坏标记拒绝写入。
+- 原始导入字节不变、大小写冲突、同文件导入、源清理失败与取消。
+- 当前文件改名或删除、跨文件步骤失败、外部修改冲突、只读命令不写入。
+- 完成态快照、当前态按键、校验错误、取消清理、NO_COLOR、中文路径及窄终端。
+- Windows 手工验证权限不足、拖入带空格路径、Tab 补全及 Equalizer APO 的切换与覆盖重载。
+
+遵循项目工作流：代码修改后报告，由开发者本地验证；未经明确要求不自动运行 build、test、package 或部署命令。届时可手工运行：
+
+```powershell
+go build ./...
+go test ./...
+go vet ./...
+gofmt -l .
+go build -ldflags '-s -w' -o eqm.exe ./cmd/eqm
 ```
 
-| 测试层 | 内容 |
-| --- | --- |
-| 单元测试 | `naming` 推断、`eqparser` 正负样例、slug 冲突、`store` 增删改查与重名、`apobridge` 备份与替换（`t.TempDir()`）、`render` 纯函数 |
-| 界面逻辑 | `ui/select` 的 Model 喂 `tea.KeyMsg` 序列断言光标 / 选中 / 取消；`ui/paste` 表驱动断言各类粘贴文本；中文名按列宽截断 |
-| 夹具 | `testdata/fixtures/`：GraphicEQ、ParametricEQ、带 BOM、LF、空文件、随机文本 |
-| 手工验收（Windows） | 初始化、导入、切换后主观听感变化、收尾后滚动记录是否干净、重定向不阻塞、删除生效项、只读目录报错、非 ASCII 用户名 |
+## 9. 系统语言与英文 APO 注释
 
----
+通过 Windows `GetUserPreferredUILanguages(MUI_LANGUAGE_NAME)` 读取当前用户首选显示语言；首项为 `zh` 或 `zh-*` 时使用简体中文，其他情况及调用失败回退英文。不使用区域数字格式或终端代码页推断界面语言。连接到 Windows 控制台时临时将输入输出代码页设为 UTF-8，退出时恢复原值。
 
-## 10. 里程碑
+所有产品文案集中于 `internal/i18n`；业务错误携带消息键，由 CLI/UI 翻译。底层系统错误作为原因追加。APO 文件生成逻辑不依赖语言资源，始终输出简短英文标记 `EQAPO-Profile-Manager BEGIN/END` 与 `Original config.txt`。
 
-| 阶段 | 内容 | 验收 |
-| --- | --- | --- |
-| M0 | `go.mod` + `cmd/eqm` 骨架、`eqm --version` | `go build ./...` 与 `go vet ./...` 通过 |
-| M1 | `paths` / `appconfig` / `apobridge` + `init`（含当场校验与首次接管） | 生成的 `config.txt` 能被 APO 加载 |
-| M2 | `eqparser` / `naming` / `store` + `import` / `switch --plain` | 导入真实 AutoEQ 样例无误 |
-| M3 | 行内列表（`select` / `confirm` / `input` / `style` / `runner` / `paste`）+ `switch` | Windows 上切换即时生效，收尾干净 |
-| M4 | `remove` / `show` / 重名覆盖流程 | 边界情况按设计表现 |
-| M5 | 测试补齐、发布 zip | 干净机器上直接运行 |
+参考：[Windows 显示语言 API](https://learn.microsoft.com/windows/win32/api/winnls/nf-winnls-getuserpreferreduilanguages)、[Bubble Tea v2](https://pkg.go.dev/charm.land/bubbletea/v2)。
 
----
+## 10. UAC 边界
 
-## 11. 已核实事实
+`platform.PermissionDenied` 仅识别访问拒绝和缺少特权。CLI 的 `commit` 先执行普通权限提交；失败且没有部分完成标记时，发送同一个已确认操作给管理员工作进程。初始化、切换、导入、源文件清理、改名和删除均经过此入口。业务校验和读取错误仍在原终端反馈。
 
-### 11.1 借鉴与不借鉴 `gh`
+`ShellExecuteExW` 使用 `runas`、`SW_HIDE`、进程句柄及同步启动标记，通过绝对 exe 路径和 `windows.ComposeCommandLine` 保留原参数，不经过 shell。工作进程不启动 Bubble Tea、不等待键盘输入；原向导在提交回调内接收结果并继续，不重启或重放整个向导。
 
-| `gh` 的行为 | 取舍 |
-| --- | --- |
-| 提示渲染在滚动记录里，不进备用屏幕 | 借鉴 |
-| 缺参数时才提示，且都能用 flag 绕过 | 借鉴 |
-| 列表：方向键 + 直接打字过滤 + 分页（`survey`，`PageSize` 20） | 借鉴（分页改为跟随光标滑动） |
-| 无参数打帮助 | 不借鉴（`eqm` 进列表） |
-| 退出码 0 / 1 / 2（取消） | 借鉴语义，另加 3 / 4 |
-| `NO_COLOR` / `CLICOLOR` / `GH_FORCE_TTY` | 只用 `NO_COLOR` |
-| `--json` / `--jq` / `--template` | v1 不做 |
-| `GH_PROMPT_DISABLED` | 不做（TTY 判定已覆盖脚本场景） |
-| 销毁类操作 `--yes` | 借鉴 |
+父进程创建随机命名、本机专用的命名管道，ACL 仅允许原用户与管理员组。两端验证对端 PID，父进程同时核对 UAC 返回的进程句柄。管道使用有长度上限的消息帧及 overlapped I/O，并等待对端进程退出信号；取消 I/O 后等待完成再释放缓冲区。同一命令内复用连接，父进程结束或断开后工作进程退出。
 
-### 11.2 粘贴与拖拽
+私有启动上下文传递管道名称、父 PID、原用户 LocalAppData 和界面语言，只在管理员进程中接受。具体请求走管道，限定为原 CLI 命令的业务操作；不暴露任意 shell 或通用文件写入接口。工作进程核对配置路径及目标目录，保留另一管理员账户确认 UAC 时的原用户设置位置。
 
-| 事实 | 意义 |
-| --- | --- |
-| bubbletea v2 原生支持 bracketed paste 且默认开启，内容以 `tea.PasteMsg{Content}` 送到 `Update`（另有 `PasteStartMsg` / `PasteEndMsg`）；关闭用 `View.DisableBracketedPasteMode = true` | 提供了「在文本进输入框前截住」的钩子 |
-| Windows Terminal 的拖拽不是读剪贴板：WT 自己解析拖入文件，把路径文本按 bracketed paste 送进终端 | 拖拽与粘贴是同一件事，只需一个解析器 |
-| WT 多个路径之间默认一个空格分隔，**结尾不加分隔符** | 解析不能依赖结尾空格 |
-| WT **只有路径含空格时才加双引号**（路径转换开启时用单引号），无空格路径是裸的 `C:\a\b.txt` | 解析器要同时吃两种形式（crush 的解析器在此有缺陷） |
-| 可用 `WT_SESSION` 判断 Windows Terminal；Rio 在 Windows 上会夹 `\x00` | 先清 NUL 再解析 |
-| 剪贴板文件列表是 `CF_HDROP`，`golang.design/x/clipboard` 的 `ReadFiles(ctx)` 可读且无需 cgo；`atotto/clipboard` 只支持文本 | 用于「资源管理器 Ctrl+C 后 Ctrl+V」（见 open-questions Q9） |
-| 参考实现：crush `internal/fsext/paste.go`、docker/docker-agent `pkg/tui/components/editor/paste.go`；chip 渲染参考 crush `internal/ui/attachments/attachments.go` | 照抄解析规则而不是自己猜 |
+文件快照传输包括原始字节、存在状态及卷序列号/文件索引。工作进程读取文件后核对身份和内容，再交给原有 core 锁和提交检查；冲突时停止，不重新生成快照绕过确认。`initPartial` 等部分完成错误不自动重试。工作进程返回本地化结果、退出码及停止/清空输入标志；拒绝 UAC 留在原步骤，持续访问拒绝或结果未知的通信中断停止操作。
 
-### 11.3 chip 输入框现状
+## 11. 系统打开方式
 
-| 方案 | 结论 |
-| --- | --- |
-| `bubbles` 的 `textinput` / `textarea` | 只有普通文本，无 chip 支持 |
-| `huh` 的 `Input` / `FilePicker` | `FilePicker` 是目录浏览，不是 chip |
-| Codex CLI 的 `TextElement` | 多附件编辑器方案（占位符映射 + 重新编号），单文件场景不需要 |
-| 自实现 | 一个字段 + 至多一个附件 + lipgloss 渲染，约几十行 |
+`open` 复用配置选择列表，选中后校验文件快照并调用 `SHOpenWithDialog`，传入 `OPENASINFO` 与 `OAIF_EXEC`。调用在固定 OS 线程上初始化 STA COM，并在返回后释放；不经过 shell 拼接命令，不使用默认关联直接打开，不增加应用依赖。
 
----
+系统调用失败显示 `✗`；窗口正常返回或用户取消后统一显示 `✓ 已显示打开方式窗口：<配置名>`，不判断是否实际打开、编辑或保存。调用始终位于原 CLI 进程，不使用后台管理员工作进程；EQM 不改写文件关联、EQ 内容或当前选择。
 
-## 12. 待实测清单
+本地验收增加：普通输入/确认/选择的符号、带提示的重命名光标、UAC 拒绝的警告级别、中文与空格文件名的系统打开方式、取消对话框、无配置和非交互模式下的 `open`。
 
-大部分 APO 行为已经在 2026-09-22 通过源码与官方文档核实（结论见 §4.3、§4.4），
-这里只留真正还没把握的。
-
-### Equalizer APO 行为（只能在 Windows 上验证）
-
-1. **自动重载的实际表现**：切换后 Equalizer APO 多久生效（预期是亚秒级，因为有 10 ms
-   去抖 + 整份重读），以及需不需要重启播放流。
-2. **非 ASCII 路径**：库里路径含中文时 APO 能否正常 `CreateFile` 打开
-   （源码显示路径会转成宽字符再打开，且行文本先按 UTF-8 解码，所以预期可用，但要实测）。
-3. **需要管理员权限的场景**：默认安装下 `Program Files\EqualizerAPO\config` 不可写时，
-   以管理员身份运行 `eqm` 的体验如何；是否值得在文档里主推「把 APO 配置目录挪到可写位置」。
-4. `Include:` 进来的文件是否需要自带 `Preamp:`（本方案认为不需要）。
-5. 长路径边界：接近 260 字符的路径是否真的失败（验证 §4.4 里的 `MAX_PATH` 结论）。
-
-验证方式：手工构造最小 `config.txt` + `Include` 组合，改一改被包含的文件，观察 APO
-Configurator 与 Edit 窗口的反馈。结论记录到 `docs/apo-behavior-notes.md`。
-
-### 界面行为（Windows Terminal 与旧版 conhost 各跑一遍）
-
-6. 收尾后滚动记录是否干净（空 `View()` 与 `ClearScreen` 两种写法都要试）。
-7. 拖动窗口改变宽度后列表是否正确重排。v2 的 `signals_windows.go` 里
-   `listenForResize` 是 no-op（issue #1601 未闭环）；兜底方案是每次按键自行读一次宽度
-   （`x/term` 的 `GetSize` 或 `windows.GetConsoleScreenBufferInfo`）。
-8. 方向键在 v2 的 VT 输入模式下是否正常（v2 已不再用控制台事件）。
-9. 把文件从资源管理器拖进终端，解析器是否吃下实际字节。
-10. 中文在两处的显示效果：列表里的列宽与截断；旧版 conhost 的字体/代码页
-    （启动切到 UTF-8 后是否足够，还是要在文档里建议用 Windows Terminal）。
-11. 系统语言检测在中文系统与英文系统上各跑一次，确认 `LC_ALL` 等环境变量的覆盖生效。
-
-第 6-11 条用同一个 60 行的最小 `select` 原型加一段文案即可覆盖。
-
----
-
-## 13. 界面语言实现
-
-已核实的可用手段：
-
-| 需求 | 手段 |
-| --- | --- |
-| 读系统语言 | `windows.GetUserPreferredUILanguages(windows.MUI_LANGUAGE_NAME)` 返回 `[]string{"zh-CN","en-US",…}`，取第一个即可。**注意**：`GetUserDefaultUILanguage` / `GetUserDefaultLocaleName` 并没有被 `x/sys/windows` 导出，需要自己 `NewLazySystemDLL` 包装（不必要，用上面那个就够） |
-| 用户覆盖 | 按 gettext 惯例取第一个非空值：`LANGUAGE` → `LC_ALL` → `LC_MESSAGES` → `LANG`；Windows 原生命令行通常不设这些变量，所以只在 Git Bash / WSL / 手动设置时生效 |
-| 语言匹配 | 简单的 `zh*` → 中文、`en*` → 英文、其余 → 英文即可；需要更正式可上 `golang.org/x/text/language` 的 `NewMatcher` |
-| 文案存放 | v1 用 `//go:embed` 内嵌两份 `map[string]string`（或两个 JSON）最简单，零依赖；`go-i18n` 适合要复数规则/翻译流程时再换 |
-| 中文输出 | 启动时 `windows.SetConsoleOutputCP(65001)` 与 `SetConsoleCP(65001)`；Go 源码本身永远是 UTF-8，源文件不要加 BOM。旧版 conhost 是 GDI 渲染且没有字体回退，中文可能显示为方框，需要在文档里建议用 Windows Terminal |
-| 管道输出 | 重定向时控制台代码页无关，直接输出 UTF-8 字节即可 |
-
-约定：**文案不硬写在代码里**；`--lang` 参数预留但 v1 可以先不做。
+参考：[SHOpenWithDialog](https://learn.microsoft.com/windows/win32/api/shlobj_core/nf-shlobj_core-shopenwithdialog)、[OPENASINFO](https://learn.microsoft.com/windows/win32/api/shlobj_core/ns-shlobj_core-openasinfo)。
