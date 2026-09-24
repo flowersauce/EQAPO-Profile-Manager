@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/icons/app/eqm-logo.svg" alt="EQM logo" width="120"></p>
+
 <h1 align="center">EQAPO-Profile-Manager</h1>
 
 <p align="center">A lightweight Equalizer APO profile manager. Import, switch, and manage ready-to-use profiles from your terminal without repeatedly editing configuration files.</p>
@@ -70,24 +72,26 @@ Initialization preserves the original `config.txt` content as comments, so its p
 
 ## Build
 
-Install Go 1.25 or later on Windows, then run:
+Install Go 1.25 or later and PowerShell on Windows, manually install `go-winres` and put it on PATH, then run:
 
 ```powershell
 git clone https://github.com/flowersauce/EQAPO-Profile-Manager.git
 cd EQAPO-Profile-Manager
-go build -o eqm.exe ./cmd/eqm
+go install github.com/tc-hib/go-winres@v0.3.3
+.\scripts\build-windows.ps1
 .\eqm.exe
 ```
 
-A directly built executable stores settings in `%LOCALAPPDATA%\EQM`. For portable mode, create an empty `portable.flag` file next to the executable.
+The script calls `go-winres` from PATH and embeds `internal/resources/icons/app/eqm.ico` in the executable. The SVG source is at `assets/icons/app/eqm-logo.svg`. A directly built executable stores settings in `%LOCALAPPDATA%\EQM`. For portable mode, create an empty `portable.flag` file next to the executable.
 
-To produce an MSI installer and portable ZIP, also install PowerShell 7 and a .NET SDK / runtime capable of running WiX 6:
+To produce an MSI installer and portable ZIP, also install PowerShell 7 and a .NET SDK / runtime capable of running WiX 6. Restore the repository's pinned WiX tool manually first:
 
 ```powershell
-.\scripts\build-release.ps1 -Version 1.0.0 -MsiVersion 1.0.0
+dotnet tool restore
+.\scripts\build-release.ps1 -Version 1.0.0
 ```
 
-The script restores the repository's pinned WiX tool and writes packages and SHA256 checksums to `dist`. Existing files with the same names are not overwritten.
+The release script calls the EXE build and packaging scripts; you do not need to run `build-windows.ps1` first or edit the default version in `main.go`. It writes packages and SHA256 checksums to `dist`. Existing files with the same names are not overwritten.
 
 ## License
 

@@ -190,7 +190,7 @@ Include: eqm-profiles\philips-shp9500.txt
 
 ## 8. 版本、打包与验证
 
-默认版本为 `1.0.0`，正式发布使用三段数字版本。构建时可通过 `-ldflags "-X main.version=1.0.1"` 覆盖；展示值不另加 `v` 前缀。MSI 使用独立、单调递增的三段数字版本，不能直接使用带 preview 后缀的 CLI 版本。发布入口为 `scripts/build-release.ps1`，WiX 定义位于 `packaging/windows/Package.wxs`；详见 `docs/windows-release.md`。
+默认版本为 `1.0.0`，正式发布使用三段数字版本。发布入口 `scripts/build-release.ps1` 只需 `-Version`，会在构建时覆盖 CLI 版本并用于 MSI；展示值不另加 `v` 前缀。预发布版须用 `-MsiVersion` 指定独立且递增的数字版本。WiX 定义位于 `packaging/windows/Package.wxs`；详见 `docs/windows-release.md`。
 
 必要的验证用例：
 

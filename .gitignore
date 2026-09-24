@@ -11,6 +11,8 @@ portable.flag
 /dist/
 *.msi
 *.wixpdb
+/cmd/eqm/rsrc_windows_amd64.syso
+/AGENTS.md
 
 # Go workspace files
 go.work

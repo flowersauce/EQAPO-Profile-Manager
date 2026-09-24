@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/icons/app/eqm-logo.svg" alt="EQM logo" width="120"></p>
+
 <h1 align="center">EQAPO-Profile-Manager</h1>
 
 <p align="center">轻量级 Equalizer APO 配置管理器。在终端中导入、切换和管理现成的 Equalizer APO 配置，无需反复手动编辑配置文件。</p>
@@ -70,24 +72,26 @@ eqm switch
 
 ## 构建
 
-在 Windows 上安装 Go 1.25 或更新版本，然后运行：
+在 Windows 上安装 Go 1.25 或更新版本及 PowerShell，并手动安装 `go-winres`、将其加入 PATH，再运行：
 
 ```powershell
 git clone https://github.com/flowersauce/EQAPO-Profile-Manager.git
 cd EQAPO-Profile-Manager
-go build -o eqm.exe ./cmd/eqm
+go install github.com/tc-hib/go-winres@v0.3.3
+.\scripts\build-windows.ps1
 .\eqm.exe
 ```
 
-直接构建的程序将设置保存在 `%LOCALAPPDATA%\EQM`。如需便携模式，在 exe 同目录创建空的 `portable.flag` 文件。
+脚本会调用 PATH 中的 `go-winres`，将 `internal/resources/icons/app/eqm.ico` 嵌入 exe；SVG 源文件位于 `assets/icons/app/eqm-logo.svg`。直接构建的程序将设置保存在 `%LOCALAPPDATA%\EQM`。如需便携模式，在 exe 同目录创建空的 `portable.flag` 文件。
 
-生成 MSI 安装包和便携 ZIP 还需要 PowerShell 7，以及可运行 WiX 6 的 .NET SDK / Runtime：
+生成 MSI 安装包和便携 ZIP 还需要 PowerShell 7，以及可运行 WiX 6 的 .NET SDK / Runtime。先手动恢复仓库固定版本的 WiX 工具：
 
 ```powershell
-.\scripts\build-release.ps1 -Version 1.0.0 -MsiVersion 1.0.0
+dotnet tool restore
+.\scripts\build-release.ps1 -Version 1.0.0
 ```
 
-脚本自动恢复仓库指定的 WiX 工具，产物与 SHA256 校验文件输出至 `dist`，不会覆盖同名文件。
+发布脚本会调用 EXE 构建和打包脚本，无须先运行 `build-windows.ps1`，也无须修改 `main.go` 的默认版本。产物与 SHA256 校验文件输出至 `dist`，不会覆盖同名文件。
 
 ## 许可
 

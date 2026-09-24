@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 160 160" role="img"
+  aria-labelledby="title desc">
+  <title id="title">EQM logo</title>
+  <desc id="desc">A folder holds two profile files. A check mark identifies the selected file, and a terminal prompt
+    appears on the folder.</desc>
+
+  <g id="logo-art" transform="matrix(1.071428571 0 0 1.090909091 -5.714285714 -9.454545455)">
+    <path
+      d="M24 55 C24 48 29 43 36 43 H60 L72 55 H124 C131 55 136 60 136 67 V125 C136 132 131 137 124 137 H36 C29 137 24 132 24 125 Z"
+      fill="#c88a25" />
+    <rect x="45" y="27" width="46" height="77" rx="6" fill="#bac5cd" />
+    <path d="M68 32 Q68 27 73 27 H100 L116 43 V105 H68 Z" fill="#e8edf1" />
+    <path d="M100 27 V40 Q100 43 103 43 H116 Z" fill="#c9d4dc" />
+    <circle cx="91" cy="56" r="11" fill="#2daa63" />
+    <path d="M86 56 L90 60 L97 52" fill="none" stroke="#ffffff" stroke-width="3.2" stroke-linecap="round"
+      stroke-linejoin="round" />
+    <path d="M24 78 Q24 72 30 72 H130 Q136 72 136 78 V125 Q136 137 124 137 H36 Q24 137 24 125 Z" fill="#f2b544" />
+    <path d="M42 96 L54 105 L42 114" fill="none" stroke="#2d3740" stroke-width="7" stroke-linecap="round"
+      stroke-linejoin="round" />
+  </g>
+</svg>

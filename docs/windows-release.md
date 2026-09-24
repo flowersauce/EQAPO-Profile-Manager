@@ -19,13 +19,16 @@
 
 ## 构建发布包
 
-构建环境：Windows x64、PowerShell 7、Go 1.25+、能够运行 WiX 6 的 .NET SDK / runtime。WiX CLI 固定为 6.0.2，由仓库的 `.config/dotnet-tools.json` 管理，发布脚本调用 `dotnet tool restore` 获取它。用户运行 EQM 不需要 Go 或 .NET。
+构建环境：Windows x64、PowerShell 7、Go 1.25+、能够运行 WiX 6 的 .NET SDK / runtime。手动运行 `go install github.com/tc-hib/go-winres@v0.3.3` 并将可执行文件加入 PATH；构建脚本只调用已安装的工具。WiX CLI 固定为 6.0.2，由仓库的 `.config/dotnet-tools.json` 管理，也需手动运行 `dotnet tool restore`。SVG 源文件位于 `assets/icons/app/eqm-logo.svg`，供 EXE 构建使用的 ICO 位于 `internal/resources/icons/app/eqm.ico`。用户运行 EQM 不需要 Go 或 .NET。
+
+修改 SVG 后，可自行安装 `resvg_py==0.5.0` 与 `Pillow`，运行 `python scripts/generate-app-icon.py` 更新 ICO。普通构建和发布构建都直接使用仓库中的 ICO，不会安装或下载转换工具。
 
 ```powershell
-.\scripts\build-release.ps1 -Version 1.0.0 -MsiVersion 1.0.0
+dotnet tool restore
+.\scripts\build-release.ps1 -Version 1.0.0
 ```
 
-`Version` 写入 CLI。`MsiVersion` 是独立的三段数字版本，必须随每次 MSI 发布递增；正式版与 CLI 版本保持一致，首版均为 `1.0.0`。预发布后缀不能直接用于 MSI，也不要给连续发布包复用相同 MSI 版本。UpgradeCode 与现有 EqmExecutable 组件 GUID 均固定，常规版本升级时不能重新生成。
+正式版只需传入一次 `Version`：发布脚本将它写入 CLI、产物名称和 MSI 版本。`main.go` 的默认版本无需修改，也无需先运行 `build-windows.ps1`。预发布版必须额外传入独立的三段数字 `-MsiVersion`；每次 MSI 发布都必须使用递增的数字版本，不能让预发布版与正式版复用同一个 MSI 版本。UpgradeCode 与现有 EqmExecutable 组件 GUID 均固定，常规版本升级时不能重新生成。
 
 输出至 `dist`：
 
