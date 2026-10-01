@@ -113,7 +113,6 @@ Installers:
   AppsAndFeaturesEntries:
   - DisplayName: $(ConvertTo-YamlString $productName)
     Publisher: $(ConvertTo-YamlString $publisher)
-    DisplayVersion: $(ConvertTo-YamlString $productVersion)
     ProductCode: $(ConvertTo-YamlString $productCode)
     UpgradeCode: $(ConvertTo-YamlString $upgradeCode)
 ManifestType: installer
