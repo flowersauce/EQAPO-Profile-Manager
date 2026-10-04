@@ -9,9 +9,14 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$wix = Get-Command wix -CommandType Application -ErrorAction SilentlyContinue
+if (-not $wix) {
+    throw 'WiX is required on PATH. Install it manually before packaging.'
+}
+
 Push-Location $repoRoot
 try {
-    & dotnet tool run wix -- build (Join-Path $repoRoot 'packaging/windows/Package.wxs') `
+    & $wix.Source build (Join-Path $repoRoot 'packaging/windows/Package.wxs') `
         -arch x64 -d "MsiVersion=$MsiVersion" -d "SourceDir=$SourceDir" `
         -intermediateFolder $IntermediateDir -o $MsiPath
     if ($LASTEXITCODE -ne 0) { throw 'WiX MSI build failed.' }

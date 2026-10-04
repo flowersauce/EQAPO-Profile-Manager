@@ -84,10 +84,9 @@ go install github.com/tc-hib/go-winres@v0.3.3
 
 脚本会调用 PATH 中的 `go-winres`，将 `internal/resources/icons/app/eqm.ico` 嵌入 exe；SVG 源文件位于 `assets/icons/app/eqm-logo.svg`。直接构建的程序将设置保存在 `%LOCALAPPDATA%\EQM`。如需便携模式，在 exe 同目录创建空的 `portable.flag` 文件。
 
-生成 MSI 安装包和便携 ZIP 还需要 PowerShell 7，以及可运行 WiX 6 的 .NET SDK / Runtime。先手动恢复仓库固定版本的 WiX 工具：
+生成 MSI 安装包和便携 ZIP 还需要 PowerShell 7，以及已手动安装并加入 PATH 的 WiX 命令行工具及其所需的 .NET 运行时。发布脚本直接调用 PATH 中的 `wix`：
 
 ```powershell
-dotnet tool restore
 .\scripts\build-release.ps1 -Version 1.0.0
 ```
 
