@@ -17,7 +17,12 @@ import (
 type Store struct{ Root string }
 type Profile struct{ Filename string }
 
-func (p Profile) Name() string                 { return p.Filename[:len(p.Filename)-4] }
+func (p Profile) Name() string {
+	if strings.EqualFold(filepath.Ext(p.Filename), ".txt") {
+		return p.Filename[:len(p.Filename)-4]
+	}
+	return p.Filename
+}
 func (s Store) ConfigDir() string              { return filepath.Join(s.Root, "config") }
 func (s Store) ProfilesDir() string            { return filepath.Join(s.ConfigDir(), "eqm-profiles") }
 func (s Store) ProfilePath(name string) string { return filepath.Join(s.ProfilesDir(), name) }
@@ -39,6 +44,7 @@ func (s Store) validateDirs() error {
 	return nil
 }
 
+// List scans only regular supported profiles directly in the management folder.
 func (s Store) List() ([]Profile, error) {
 	if err := platform.Directory(s.ProfilesDir()); err != nil {
 		return nil, err
@@ -50,25 +56,26 @@ func (s Store) List() ([]Profile, error) {
 	var result []Profile
 	seen := map[string]bool{}
 	for _, entry := range entries {
-		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 || !strings.EqualFold(filepath.Ext(entry.Name()), ".txt") {
+		name := entry.Name()
+		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 || (strings.HasPrefix(name, ".eqm-") && strings.HasSuffix(name, ".tmp")) || apo.ValidateFilename(name) != nil {
 			continue
 		}
-		_, err := platform.Regular(s.ProfilePath(entry.Name()))
+		file, err := platform.Read(s.ProfilePath(name), false)
 		if fault.IsKey(err, "regular") {
 			continue
 		}
 		if err != nil {
 			return nil, err
 		}
-		if err := apo.ValidateFilename(entry.Name()); err != nil {
-			return nil, fault.Wrap("invalidProfile", err, entry.Name())
+		if CheckFormat(file.Data) != nil {
+			continue
 		}
-		key := strings.ToUpper(entry.Name())
+		key := strings.ToUpper(name)
 		if seen[key] {
 			return nil, fault.New("collision")
 		}
 		seen[key] = true
-		result = append(result, Profile{entry.Name()})
+		result = append(result, Profile{name})
 	}
 	sort.Slice(result, func(i, j int) bool {
 		a, b := strings.ToUpper(result[i].Filename), strings.ToUpper(result[j].Filename)
@@ -78,6 +85,21 @@ func (s Store) List() ([]Profile, error) {
 		return a < b
 	})
 	return result, nil
+}
+
+// RelativeProfile accepts only files directly in the management folder.
+func (s Store) RelativeProfile(path string) (string, error) {
+	name, err := filepath.Rel(s.ProfilesDir(), path)
+	if err != nil {
+		return "", err
+	}
+	if err := apo.ValidateFilename(name); err != nil {
+		return "", err
+	}
+	if err := platform.Directory(s.ProfilesDir()); err != nil {
+		return "", err
+	}
+	return name, nil
 }
 
 func (s Store) Read() (State, error) {
@@ -104,11 +126,11 @@ func (s Store) Read() (State, error) {
 	}
 	state = State{Config: config, Document: doc, Profiles: profiles}
 	if doc.Enabled {
-		_, err := platform.Regular(s.ProfilePath(doc.Filename))
-		if err == nil {
-			state.Current = doc.Filename
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return state, err
+		for _, profile := range profiles {
+			if strings.EqualFold(profile.Filename, doc.Filename) {
+				state.Current = profile.Filename
+				break
+			}
 		}
 	}
 	return state, nil
@@ -158,6 +180,11 @@ func (s Store) locked(state State, action func(State) error) error {
 }
 
 func (s Store) Switch(state State, filename string) error {
+	if filename != "" {
+		if err := apo.ValidateFilename(filename); err != nil {
+			return err
+		}
+	}
 	return s.locked(state, func(now State) error {
 		if filename == "" && !now.Document.Enabled {
 			return nil
@@ -166,10 +193,14 @@ func (s Store) Switch(state State, filename string) error {
 		if target == "" {
 			target = now.Document.Filename
 		} else {
-			if err := apo.ValidateFilename(target); err != nil {
+			if _, err := s.RelativeProfile(s.ProfilePath(target)); err != nil {
 				return err
 			}
-			if _, err := platform.Regular(s.ProfilePath(target)); err != nil {
+			profile, err := s.ReadProfile(target)
+			if err != nil {
+				return err
+			}
+			if err := CheckFormat(profile.Data); err != nil {
 				return err
 			}
 			if now.Document.Enabled && strings.EqualFold(now.Document.Filename, target) {
@@ -188,7 +219,7 @@ func (s Store) ReadProfile(filename string) (platform.Snapshot, error) {
 	if err := apo.ValidateFilename(filename); err != nil {
 		return platform.Snapshot{}, err
 	}
-	if err := platform.Directory(s.ProfilesDir()); err != nil {
+	if _, err := s.RelativeProfile(s.ProfilePath(filename)); err != nil {
 		return platform.Snapshot{}, err
 	}
 	return platform.Read(s.ProfilePath(filename), false)
@@ -254,7 +285,7 @@ func (p InitPlan) Commit() error {
 			return err
 		}
 		if p.Document.Enabled {
-			if _, err := platform.Regular(p.Store.ProfilePath(p.Document.Filename)); errors.Is(err, os.ErrNotExist) {
+			if _, err := p.Store.ReadProfile(p.Document.Filename); errors.Is(err, os.ErrNotExist) || fault.IsKey(err, "filename") {
 				data, err = p.Document.Select(p.Document.Filename, false)
 				if err != nil {
 					return err

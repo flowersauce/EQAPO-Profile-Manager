@@ -15,7 +15,7 @@ cmd/eqm/             入口、退出码
 internal/cli/        命令分发、业务步骤编排、输出
 internal/core/       配置扫描、导入、改名、删除、初始化
 internal/apo/        托管区域解析与 Include 更新
-internal/settings/   便携/安装模式路径解析、安装根目录持久化
+internal/settings/   便携/MSI/MSIX 路径解析、安装根目录持久化
 internal/ui/         单一生命周期向导、输入与选择控件
 internal/platform/   Windows 文件替换、文件身份、UAC、系统语言与终端适配
 internal/i18n/       中英文资源与显示语言映射
@@ -34,14 +34,14 @@ internal/fault/      结构化错误、退出码与重试边界
     └── moondrop-aria-2.txt
 ```
 
-- 配置清单来自 `eqm-profiles` 的直接子文件，只纳入后缀为 `.txt` 的普通文件，不跟随符号链接或重解析点到目录外。
-- 显示名为去掉最后一个 `.txt` 后的文件名；保留 Unicode、空格与大小写，不生成 slug。
+- 配置清单只来自 `eqm-profiles` 根目录，按 UTF-8 GraphicEQ / ParametricEQ 内容识别普通文件，后缀不限；忽略子目录、内部 `.eqm-*.tmp` 和不支持的内容，不跟随链接或重解析点。
+- 只隐藏 `.txt` 后缀，其他后缀保留；同目录显示名冲突时保留完整名称。保留 Unicode、空格与大小写，不生成 slug。
 - 文件名冲突按大小写不敏感判断；排序采用同一比较规则，并以原文件名作为稳定次级键。
 - 不建立 `profiles.json`、配置 ID、独立显示名、导入时间或来源索引。
 - 不创建 `eqm\current.txt`；不持久化重复的 `current` 字段。
 - 当前选择仅从 `config.txt` 托管区域解析；注释的 Include 或空的 `# Include:` 表示 `None`。
 
-设置位置通过 `settings.PathFor` 解析：exe 同级存在普通文件 `portable.flag` 时使用 `<exe 目录>\config\config.json`，否则使用原用户的 LocalAppData 下 `EQM\config.json`。异常标记或访问错误不能静默回退；不使用工作目录推断模式。设置格式：
+设置位置通过 `settings.PathForFamily` 解析：先用 `GetCurrentPackageFamilyName` 检测包身份，MSIX 使用原用户 `Packages\<PFN>\LocalState\EQM\config.json`；无身份时根据 exe 同级的普通文件 `portable.flag` 选择便携目录或原用户 LocalAppData 下 `EQM\config.json`。异常标记或访问错误不能静默回退；不使用工作目录推断模式。设置格式：
 
 ```json
 {
@@ -54,11 +54,11 @@ internal/fault/      结构化错误、退出码与重试边界
 
 ## 3. 命令分发与输出
 
-只接受零参数的裸 `eqm`，或恰好一个已知子命令：`switch`、`list`、`import`、`remove`、`show`、`rename`、`init`。额外参数及所有 flag 均报错，提示运行裸 `eqm`。
+只接受零参数的裸 `eqm`，或恰好一个已知子命令：`import`、`init`、`list`、`open`、`print`、`remove`、`rename`、`switch`。固定别名依次为 `im`、`in`、`l`、`o`、`p`、`rm`、`rn`、`s`；`show` 已移除，进入业务及提权前规范化为完整名称。额外参数及所有 flag 均报错，提示运行裸 `eqm`。
 
 - 裸 `eqm` 和 `list` 不要求 TTY，且绝不写文件。
-- 其余命令要求 stdin、stdout 均为终端；检查在读取输入或修改状态之前完成，失败立即退出。
-- `show` 完成选择并退出动态 UI 后，将配置原始内容写到 stdout；向导问题、结果及错误走 stderr，避免混入配置正文。首版不提供重定向下的交互模式。
+- 其余命令要求 stdin、stdout、stderr 均为终端；检查在读取输入或修改状态之前完成，失败立即退出。
+- `print` 完成选择并退出动态 UI 后，将配置原始内容写到 stdout；向导问题、结果及错误走 stderr，避免混入配置正文。首版不提供重定向下的交互模式。
 - 其他命令的信息结果走 stdout，交互与错误走 stderr；UI 输出目标必须为终端，否则立即报错。
 - 裸 `eqm` 未初始化时仍正常展示版本、状态和命令概览；其他业务命令要求初始化完成。
 
@@ -106,7 +106,7 @@ internal/fault/      结构化错误、退出码与重试边界
 
 首次接管为原文件每一行增加 `# ` 前缀，包含原来的注释行和空行；不用 `# | `，不删除原内容。不建立额外的持久备份文件；原内容之后不追加页脚，以保留最后一行有无换行的状态。
 
-解析器应返回托管区的字节边界、Include 的启用状态和文件名。只有唯一、完整且位于文件开头（允许 BOM）的管理区可以修改。重复标记、未闭合标记、多条 Include、未知有效指令、越界路径均视为损坏并停止写入。只接受 `eqm-profiles\<单个文件名>.txt`，禁止绝对路径、父目录跳转及多级子目录。
+解析器返回托管区字节边界、Include 启用状态与文件名。只有唯一、完整且位于文件开头（允许 BOM）的管理区可以修改。重复标记、未闭合标记、多条 Include、未知有效指令、越界路径均视为损坏并停止写入。新选择只接受 `eqm-profiles\<文件名>`；兼容读取旧版一层分类引用，仅允许保留或禁用该旧引用，不允许新增分类引用。
 
 重复初始化、切换及自愈只替换所需托管内容，区域之外的字节保持不变。不要以搜索任意 Include 行或品牌字符串的方式判定托管状态。
 
@@ -140,9 +140,9 @@ Include: eqm-profiles\philips-shp9500.txt
 
 ### 5.2 导入
 
-流程：路径输入 → 读取原始字节与格式检查 → 文件名冲突检查 → 必要的覆盖确认 → 写入目标 → 可选删除源文件。
+流程：路径输入 → 读取原始字节与格式检查 → 根目录文件名冲突检查 → 必要的覆盖确认 → 写入目标 → 可选删除源文件。
 
-仅接受 `.txt` 文件。识别时忽略 UTF-8 BOM、空行及注释，使用 GraphicEQ / ParametricEQ 的有效指令行特征，而非在注释或任意文本中搜索关键词。只做轻量格式识别，不声称完整验证 APO 语法，不修改参数。当前接受 Preamp、GraphicEQ 和 ON 状态的 PK/LS/HS/LSC/HSC Filter 指令，至少需要一条 GraphicEQ 或 Filter；拒绝其他有效指令。正反例见 `internal/core/store_test.go`，写入始终使用原始字节。
+文件可以无后缀或使用任意后缀。识别时忽略 UTF-8 BOM、空行及注释，使用 GraphicEQ / ParametricEQ 有效指令行特征，不在任意文本中搜索关键词。只做轻量格式识别，不声称完整验证 APO 语法，不修改参数。当前接受 Preamp、GraphicEQ 和 ON 状态的 PK/LS/HS/LSC/HSC Filter 指令，至少需要一条 GraphicEQ 或 Filter；拒绝其他有效指令。正反例见 `internal/core/store_test.go`，写入始终使用原始字节。
 
 - 覆盖保留既有文件名及大小写；拒绝覆盖或取消时不写目标，不生成编号副本。
 - 使用文件身份检查源与目标相同的情况，不能只比较字符串路径；同一文件或其硬链接拒绝导入。
@@ -154,7 +154,7 @@ Include: eqm-profiles\philips-shp9500.txt
 
 列表扫描失败明确报错，不能伪装为空列表。没有配置时按设计输出简短结果，`switch` 保留 None。
 
-改名输入只编辑主文件名，固定保留 `.txt`。重名错误清空输入，其他校验错误保留输入。原名提交视为无变化；仅改大小写允许，使用 Windows `MoveFileEx` 且不设置替换已有目标的标志，避免覆盖确认后新出现的文件。
+文件改名只编辑主文件名，保留原后缀或无后缀状态。重名错误清空输入，其他校验错误保留输入。原名提交视为无变化；仅改大小写允许，使用 Windows `MoveFileEx` 且不设置替换标志，避免覆盖确认后新出现的文件。
 
 改名当前文件时同步改写托管 Include；注释引用也更新且保持禁用。若第二步失败，尝试恢复旧文件名；恢复失败必须说明磁盘状态与恢复路径。
 
@@ -179,18 +179,22 @@ Include: eqm-profiles\philips-shp9500.txt
 - 输入、选择、确认共享缩进、提示、错误与完成态样式。
 - 确认及带 `Options` 的选择标题使用 `?`，文本输入标题使用 `>`；`Step.Hint` 在标题和输入之间显示 `^` 提示，光标按提示行数与显示列宽定位，输入用 `:`。底部帮助也以 `^` 开头。
 - `Option.Current` 独立携带已应用状态，渲染为绿色 `✓`；选择光标仍为青色 `>`，不向 Label 拼接“当前”文案。
-- 选择支持方向键、`j/k`、Enter、Esc；Ctrl+C 取消；确认不接受隐藏 `y/n`。
+- 配置选择使用平面列表，↑/↓ 或 j/k 移动，Enter 提交，Esc 取消；按选中项青色、已应用项绿色、默认文字色的优先级着色，`✓` 独立标记已应用状态。`list` 直接输出并退出，不启动向导或显示标题；终端中使用灰色 `├ / └` 展示同级条目，末项或唯一项用 `└`，名称使用默认文本色，不增加当前项标记或底部说明。非交互列表只逐行输出实际文件名。确认不接受隐藏 y/n。
 - 一般错误保留输入和焦点；改名重名按设计清空。错误使用 `✗`，取消与 `fault.Warning` 使用 `!`。工作进程响应保留警告级别，UAC 状态通过 Notice 消息进入当前向导，不直接向动态区域打印。
 - 不进入 Alt Screen，不使用边框、动画或 RGB 色。
-- `internal/ui/theme.go` 统一 ANSI 语义色：青色焦点、蓝色链接、紫色输入标记与答案、绿色已应用与成功、黄色警告或取消、灰色帮助、红色错误；问题和分组标题加粗。裸 `eqm` 页的普通信息不着色，仅链接、子命令及无信息提示使用语义色，树形线和分隔符弱化为灰色。
-- 裸 `eqm` 按 `design.md` §9.5 渲染：共用树形条目规则，末项使用 `└`；标签宽度通过 `ansi.StringWidth` 计算，颜色使用同一主题。关于中的作者与仓库地址对应 LICENSE 与项目 remote；版本由 `cmd/eqm/main.go` 的 `version` 提供。输出颜色按实际 writer、stdout 终端状态与 `NO_COLOR` 判断。
+- `internal/ui/theme.go` 统一 ANSI 语义色：青色焦点、蓝色链接、紫色输入标记与答案、绿色已应用与成功、黄色警告或取消、灰色帮助、红色错误；问题和分组标题加粗。裸 `eqm` 页标题加粗，灰色仅用于树形线和分隔符；信息标签、信息值、普通命令文字及说明使用默认文字色，缩写使用青色强调，`None` 与有效配置名称同色。
+- 裸 `eqm` 按 `design.md` §9.5 渲染：信息区使用树形分支符号，末项使用 `└`；标签宽度通过 `ansi.StringWidth` 计算，颜色使用同一主题。帮助使用 `eqm <完整命令> · <说明>`，子命令不整体加粗，按顺序匹配固定缩写并仅将对应字母设为青色、加粗且加下划线，支持 `remove` / `rm` 与 `rename` / `rn` 的非连续匹配；说明使用默认文字色，复用信息行渲染以对齐说明列。不显示高亮含义提示，无色或重定向时以文字列出完整缩写映射。关于中的作者与仓库地址对应 LICENSE 与项目 remote；版本由 `cmd/eqm/main.go` 的 `version` 提供。输出颜色按实际 writer、stdout 终端状态与 `NO_COLOR` 判断。
 - stdout 或实际 UI 输出目标不是终端，或设置了 `NO_COLOR`（含空值）时，不输出颜色 SGR；非交互输出不产生光标控制序列。
 - 显示宽度按终端列计算；中文、宽字符及窗口缩放不得导致动态区域擦除错位。截断只影响显示，不改变路径或文件名值。
 - 粘贴通过终端输入处理，不为“粘贴支持”另行读取系统剪贴板。
 
 ## 8. 版本、打包与验证
 
-默认版本为 `1.0.0`，正式发布使用三段数字版本。发布入口 `scripts/build-release.ps1` 只需 `-Version`，会在构建时覆盖 CLI 版本并用于 MSI；展示值不另加 `v` 前缀。预发布版须用 `-MsiVersion` 指定独立且递增的数字版本。WiX 定义位于 `packaging/windows/Package.wxs`；详见 `docs/windows-release.md`。
+默认版本为 `1.1.0`，正式发布使用三段数字版本。发布入口 `scripts/build-release.ps1` 只需 `-Version`，会在构建时覆盖 CLI 版本并用于 MSI；展示值不另加 `v` 前缀。MSIX 清单追加第四段 `0`，当前为 `1.1.0.0`，文件名仍使用 `1.1.0`。预发布版须用 `-MsiVersion` 指定独立且递增的数字版本。WiX 定义位于 `packaging/windows/Package.wxs`；详见 `docs/windows-release.md`。
+
+MSI / winget 卸载使用已安装 WiX 工具的 Util 扩展递归清理 EQM 用户配置。私有属性 `eqmDataFolder` 固定解析为 `[LocalAppDataFolder]EQM\`，在 `Wix4RemoveFoldersEx_X64` 前设置，不从用户配置或命令行读取删除目标。设置路径和 `RemoveFolderEx` 均以 `REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE` 为条件，升级和修复不清理设置。MSIX 设置限定在包 LocalState，由系统在正常卸载时清理；两种方式均不修改 APO 的 config 目录。
+
+公开产物位于 `output/public`，`-IncludeStore` 额外调用 `package-msix.ps1`，用固定商店清单及从统一 SVG 源渲染的 PNG 生成包和资源，写入 `output/store`。EXE 的 ICO 与 MSIX 的 PNG 均使用 `assets/icons/app/eqm-logo.svg`，不从 ICO 派生 MSIX 图标。MSIX 不含便携标记、用户数据或 APO 驱动；`allowElevation` 需商店审批，详见 `packaging/msix/README.md`。发布脚本允许同版本重新构建，全部打包成功后替换 `output`，只保留本次产物；失败保留上一份完整产物。WinGet 输出为 `output/winget-manifests`，生成器拒绝覆盖已有版本目录。
 
 必要的验证用例：
 
@@ -200,7 +204,7 @@ Include: eqm-profiles\philips-shp9500.txt
 - 完成态快照、当前态按键、校验错误、取消清理、NO_COLOR、中文路径及窄终端。
 - Windows 手工验证权限不足、拖入带空格路径、Tab 补全及 Equalizer APO 的切换与覆盖重载。
 
-遵循项目工作流：代码修改后报告，由开发者本地验证；未经明确要求不自动运行 build、test、package 或部署命令。届时可手工运行：
+本项目允许自动运行构建、测试、静态检查及打包；验证失败时修复后重跑相关检查。部署、发布和安装涉及外部状态，仍需要明确指示。常用验证命令：
 
 ```powershell
 go build ./...
@@ -226,9 +230,9 @@ go build -ldflags '-s -w' -o eqm.exe ./cmd/eqm
 
 父进程创建随机命名、本机专用的命名管道，ACL 仅允许原用户与管理员组。两端验证对端 PID，父进程同时核对 UAC 返回的进程句柄。管道使用有长度上限的消息帧及 overlapped I/O，并等待对端进程退出信号；取消 I/O 后等待完成再释放缓冲区。同一命令内复用连接，父进程结束或断开后工作进程退出。
 
-私有启动上下文传递管道名称、父 PID、原用户 LocalAppData 和界面语言，只在管理员进程中接受。具体请求走管道，限定为原 CLI 命令的业务操作；不暴露任意 shell 或通用文件写入接口。工作进程核对配置路径及目标目录，保留另一管理员账户确认 UAC 时的原用户设置位置。
+私有启动上下文传递管道名称、父 PID、原用户 LocalAppData、包身份和界面语言，只在管理员进程中接受。具体请求走管道，限定为规范化后的原 CLI 命令；不暴露任意 shell 或通用文件写入接口。工作进程核对配置路径及管理根目录内的单个文件名，拒绝子目录、任意外部目标和已移除的命令，保留另一管理员账户确认 UAC 时的原用户设置位置。
 
-文件快照传输包括原始字节、存在状态及卷序列号/文件索引。工作进程读取文件后核对身份和内容，再交给原有 core 锁和提交检查；冲突时停止，不重新生成快照绕过确认。`initPartial` 等部分完成错误不自动重试。工作进程返回本地化结果、退出码及停止/清空输入标志；拒绝 UAC 留在原步骤，持续访问拒绝或结果未知的通信中断停止操作。
+文件快照传输包括原始字节、存在状态及卷序列号/文件索引。工作进程读取文件后核对身份和内容，再交给原有 core 锁和提交检查；冲突时停止，不重新生成快照绕过确认。`initPartial` 等部分完成错误不自动重试。工作进程返回本地化结果、退出码及停止/清空输入标志；拒绝 UAC 立即结束当前命令并返回取消状态（退出码 `2`），持续访问拒绝或结果未知的通信中断停止操作。
 
 ## 11. 系统打开方式
 

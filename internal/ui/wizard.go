@@ -112,6 +112,10 @@ func (m *Model) activate(step *Step) {
 	m.suggestVersion++
 }
 
+func (m *Model) moveSelection(delta int) {
+	m.selected = min(max(0, m.selected+delta), len(m.step.Options)-1)
+}
+
 func (m *Model) Init() tea.Cmd { return tea.Batch(m.awaitNotice(), m.queueSuggestion()) }
 
 // Debounce reads and reject stale results without changing the actual input.
@@ -255,12 +259,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "up", "k":
 			if len(m.step.Options) > 0 {
-				m.selected = max(0, m.selected-1)
+				m.moveSelection(-1)
 				return m, nil
 			}
 		case "down", "j":
 			if len(m.step.Options) > 0 {
-				m.selected = min(len(m.step.Options)-1, m.selected+1)
+				m.moveSelection(1)
 				return m, nil
 			}
 		}
@@ -282,13 +286,14 @@ func (m *Model) View() tea.View {
 		return tea.NewView("")
 	}
 	theme := Theme{Color: m.color}
+	var lines []string
 	prefix := ">"
 	if m.step.Confirm || len(m.step.Options) > 0 {
 		prefix = "?"
 	}
 	question := theme.Focus(prefix) + " " + theme.Heading(i18n.Safe(m.step.Question))
-	lines := []string{question}
-	cursorX, cursorY := 0, 1
+	lines = append(lines, question)
+	cursorX, cursorY := 0, len(lines)
 	if m.step.Hint != "" {
 		lines = append(lines, theme.Hint(i18n.Safe(m.step.Hint)))
 		cursorY++
@@ -298,15 +303,18 @@ func (m *Model) View() tea.View {
 		for _, option := range m.step.Options {
 			hasCurrent = hasCurrent || option.Current
 		}
-		visible := max(1, m.height-5)
+		visible := min(len(m.step.Options), max(1, m.height-5))
 		start := max(0, m.selected-visible+1)
-		for i := start; i < min(len(m.step.Options), start+visible); i++ {
+		end := min(len(m.step.Options), start+visible)
+		for i := start; i < end; i++ {
 			option := m.step.Options[i]
 			pointer, label := "  ", i18n.Safe(option.Label)
 			if i == m.selected {
-				pointer, label = theme.Focus("> "), theme.Focus(label)
+				pointer = theme.Focus("> ")
+				label = theme.Focus(label)
 			} else if option.Current {
 				label = theme.Success(label)
+
 			}
 			mark := ""
 			if hasCurrent {

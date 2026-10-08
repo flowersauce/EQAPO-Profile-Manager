@@ -24,7 +24,13 @@ func (t Theme) style(text, color string, bold bool) string {
 	return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(bold).Render(text)
 }
 
-func (t Theme) Focus(text string) string   { return t.style(text, "6", true) }
+func (t Theme) Focus(text string) string { return t.style(text, "6", true) }
+func (t Theme) Alias(text string) string {
+	if !t.Color {
+		return text
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true).Underline(true).Render(text)
+}
 func (t Theme) Link(text string) string    { return t.style(text, "4", false) }
 func (t Theme) Accent(text string) string  { return t.style(text, "5", false) }
 func (t Theme) Success(text string) string { return t.style(text, "2", false) }

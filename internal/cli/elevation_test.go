@@ -25,6 +25,7 @@ func TestCommitRetriesOnlyDeniedUncommittedOperation(t *testing.T) {
 		{"already elevated", os.ErrPermission, false, false},
 		{"partial init", fault.Wrap("initPartial", os.ErrPermission), true, false},
 		{"partial rename", fault.Wrap("renamePartial", os.ErrPermission), true, false},
+		{"partial remove", fault.Wrap("removePartial", os.ErrPermission), true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls, remote := 0, 0
@@ -118,6 +119,37 @@ func TestTransportRejectsChangesWhileUACIsOpen(t *testing.T) {
 		var restored platform.Snapshot
 		if err := json.Unmarshal(data, &restored); !fault.IsKey(err, "changed") {
 			t.Fatalf("accepted changed confirmation: %v", err)
+		}
+	}
+}
+
+func TestWorkerRejectsNestedProfilesAndMove(t *testing.T) {
+	s, path := flatFixture(t)
+	nested := s.ProfilePath(filepath.Join("旧分类", "profile.txt"))
+	if err := os.Mkdir(filepath.Dir(nested), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(nested, []byte("GraphicEQ: 20 0"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	source, err := platform.Read(nested, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := s.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{"switch", "import", "rename", "remove", "move"} {
+		request := commitRequest{Operation: command, Root: s.Root, Config: &state.Config, Source: &source, Target: &source, Value: filepath.Join("旧分类", "profile.txt")}
+		if err := request.execute(command, path); err == nil {
+			t.Fatalf("worker accepted nested profile or removed command: %s", command)
+		}
+		if err := source.Check(); err != nil {
+			t.Fatalf("rejected request changed the nested file: %s %v", command, err)
+		}
+		if err := state.Config.Check(); err != nil {
+			t.Fatalf("rejected request changed config: %s %v", command, err)
 		}
 	}
 }

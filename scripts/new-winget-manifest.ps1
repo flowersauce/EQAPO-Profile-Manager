@@ -8,7 +8,7 @@ param(
     [Parameter(Mandatory)]
     [ValidatePattern('^\d+\.\d+\.\d+$')]
     [string] $Version,
-    [string] $OutputDirectory = (Join-Path $PSScriptRoot '../dist/winget')
+    [string] $OutputDirectory = (Join-Path $PSScriptRoot '../output/winget-manifests')
 )
 
 Set-StrictMode -Version Latest

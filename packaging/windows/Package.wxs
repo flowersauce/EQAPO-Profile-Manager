@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
   <Package Name="EQM" Manufacturer="flowersauce"
            Version="$(var.MsiVersion)" Language="0" Scope="perUser"
            UpgradeCode="F17D74F4-1E0C-4D8C-A9DC-932088C13821">
@@ -26,10 +27,17 @@
             <RemoveFolder Id="RemoveEqmInstallFolder" On="uninstall" />
             <!-- RemoveFolder only removes an empty directory. -->
             <RemoveFolder Id="RemoveEmptyUserProgramsFolder" Directory="UserProgramsFolder" On="uninstall" />
+            <!-- Explicit uninstalls clean private settings; major upgrades preserve them. -->
+            <util:RemoveFolderEx Id="RemoveEqmUserData" Property="eqmDataFolder" On="uninstall"
+                                 Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
           </Component>
         </Directory>
       </Directory>
     </StandardDirectory>
+    <!-- Resolve a fixed, private current-user path before recursive removal is scheduled. -->
+    <SetProperty Id="eqmDataFolder" Action="SetEqmDataFolder" Value="[LocalAppDataFolder]EQM\"
+                 Before="Wix4RemoveFoldersEx_X64" Sequence="execute"
+                 Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     <Feature Id="EQM" Title="EQM" Level="1">
       <ComponentRef Id="EqmExecutable" />
     </Feature>

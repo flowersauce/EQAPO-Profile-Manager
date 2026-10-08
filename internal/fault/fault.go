@@ -27,9 +27,13 @@ func (e *Error) Error() string {
 func (e *Error) Unwrap() error { return e.Cause }
 
 func New(key string, args ...any) *Error {
-	stop := key == "changed" || key == "initPartial" || key == "renamePartial" || key == "removePartial"
+	stop := key == "changed" || key == "initPartial" || key == "renamePartial" || key == "removePartial" || key == "elevationCancelled"
 	warning := key == "elevationCancelled" || key == "elevationTerminal" || key == "sourceKept" || key == "busy" || key == "cancelled"
-	return &Error{Key: key, Args: args, Code: 1, Stop: stop, Warning: warning}
+	code := 1
+	if key == "elevationCancelled" {
+		code = 2
+	}
+	return &Error{Key: key, Args: args, Code: code, Stop: stop, Warning: warning}
 }
 
 func Wrap(key string, err error, args ...any) *Error {

@@ -57,3 +57,22 @@ func TestInstalledLocationUsesOriginalUserAfterUAC(t *testing.T) {
 		t.Fatalf("changed user context: %q %v", got, err)
 	}
 }
+
+func TestStoreLocationKeepsOriginalUserAndIgnoresPortableMarker(t *testing.T) {
+	exeDir := t.TempDir()
+	exe := filepath.Join(exeDir, "eqm.exe")
+	if err := os.WriteFile(filepath.Join(exeDir, "portable.flag"), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	original := t.TempDir()
+	family := "Flowersauce.EQM_fw24f0by96da4"
+	t.Setenv("LOCALAPPDATA", filepath.Join(t.TempDir(), "OtherAdmin"))
+	got, err := PathForFamily(exe, original, family)
+	want := filepath.Join(original, "Packages", family, "LocalState", "EQM", "config.json")
+	if err != nil || got != want {
+		t.Fatalf("wrong Store settings: %q %v", got, err)
+	}
+	if _, err := os.Stat(filepath.Dir(want)); !os.IsNotExist(err) {
+		t.Fatal("resolving Store settings created files")
+	}
+}

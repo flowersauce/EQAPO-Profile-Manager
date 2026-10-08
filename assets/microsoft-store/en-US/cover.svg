@@ -1,0 +1,60 @@
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1280 720" role="img" aria-labelledby="title description" lang="en">
+  <title id="title">EQM — Switch EQ profiles in any terminal</title>
+  <desc id="description">Easily switch EQ profiles in any terminal, without opening Equalizer APO’s Configuration Editor. Import, switch and remove preset EQ profiles. English Store introduction cover based on the final approved composition.</desc>
+  <style>
+    @font-face {
+      font-family: "FloriInputUI";
+      src: url("../../social-preview/fonts/FloriInputUI-Medium.ttf") format("truetype");
+      font-style: normal;
+      font-weight: 500;
+    }
+    text { font-family: "FloriInputUI"; font-weight: 500; }
+  </style>
+
+  <rect width="1280" height="720" fill="#21252b" />
+
+  <g transform="translate(80 118)">
+    <text x="0" y="128" fill="#f1f3f6" font-size="96">EQM</text>
+    <text x="2" y="205" fill="#f1f3f6" font-size="28">Easily switch EQ profiles in any terminal</text>
+    <text x="2" y="257" fill="#aeb6c3" font-size="22">Without opening Equalizer APO’s Configuration Editor</text>
+
+    <g transform="translate(0 299)" font-size="25" fill="#f1f3f6">
+      <g>
+        <text x="0" y="28" fill="#98c379" font-size="28">&gt;</text>
+        <text x="34" y="28">eqm import</text>
+        <text x="225" y="28" fill="#aeb6c3" font-size="23">Import</text>
+      </g>
+      <g transform="translate(0 40)">
+        <text x="0" y="28" fill="#61afef" font-size="28">&gt;</text>
+        <text x="34" y="28">eqm switch</text>
+        <text x="225" y="28" fill="#aeb6c3" font-size="23">Switch<tspan x="333">Preset EQ profiles</tspan></text>
+      </g>
+      <g transform="translate(0 80)">
+        <text x="0" y="28" fill="#e06c75" font-size="28">&gt;</text>
+        <text x="34" y="28">eqm remove</text>
+        <text x="225" y="28" fill="#aeb6c3" font-size="23">Remove</text>
+      </g>
+
+    </g>
+
+    <g transform="translate(0 442)">
+      <circle cx="8" cy="23" r="6" fill="#c678dd" />
+      <text x="28" y="30" fill="#aeb6c3" font-size="19">github.com/flowersauce/EQAPO-Profile-Manager</text>
+    </g>
+  </g>
+
+
+  <svg x="693.333333" y="93.333333" width="533.333334" height="533.333334" viewBox="0 0 160 160" aria-label="EQM Logo">
+    <g id="logo-art" transform="matrix(1.071428571 0 0 1.090909091 -5.714285714 -9.454545455)">
+      <path d="M24 55 C24 48 29 43 36 43 H60 L72 55 H124 C131 55 136 60 136 67 V125 C136 132 131 137 124 137 H36 C29 137 24 132 24 125 Z" fill="#c88a25" />
+      <rect x="45" y="27" width="46" height="77" rx="6" fill="#bac5cd" />
+      <path d="M68 32 Q68 27 73 27 H100 L116 43 V105 H68 Z" fill="#e8edf1" />
+      <path d="M100 27 V40 Q100 43 103 43 H116 Z" fill="#c9d4dc" />
+      <circle cx="91" cy="56" r="11" fill="#2daa63" />
+      <path d="M86 56 L90 60 L97 52" fill="none" stroke="#ffffff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" />
+      <path d="M24 78 Q24 72 30 72 H130 Q136 72 136 78 V125 Q136 137 124 137 H36 Q24 137 24 125 Z" fill="#f2b544" />
+      <path d="M42 96 L54 105 L42 114" fill="none" stroke="#2d3740" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" />
+    </g>
+  </svg>
+</svg>

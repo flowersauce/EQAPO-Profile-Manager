@@ -109,13 +109,16 @@ func (s Store) PrepareImport(input string) (ImportPlan, error) {
 	if err := CheckFormat(p.Source.Data); err != nil {
 		return p, err
 	}
-	profiles, err := s.List()
+	if err := platform.Directory(s.ProfilesDir()); err != nil {
+		return p, err
+	}
+	entries, err := os.ReadDir(s.ProfilesDir())
 	if err != nil {
 		return p, err
 	}
-	for _, profile := range profiles {
-		if strings.EqualFold(profile.Filename, p.Filename) {
-			p.Filename = profile.Filename
+	for _, entry := range entries {
+		if strings.EqualFold(entry.Name(), p.Filename) {
+			p.Filename = entry.Name()
 			break
 		}
 	}
@@ -131,6 +134,12 @@ func (s Store) PrepareImport(input string) (ImportPlan, error) {
 
 func (s Store) Import(state State, p ImportPlan) error {
 	return s.locked(state, func(now State) error {
+		if err := apo.ValidateFilename(p.Filename); err != nil {
+			return err
+		}
+		if !strings.EqualFold(filepath.Clean(p.Target.Path), s.ProfilePath(p.Filename)) {
+			return fault.New("elevationContext")
+		}
 		for _, profile := range now.Profiles {
 			if strings.EqualFold(profile.Filename, p.Filename) && profile.Filename != p.Filename {
 				return fault.New("changed", p.Target.Path)
@@ -164,29 +173,39 @@ func (p ImportPlan) DeleteSource() error {
 	return nil
 }
 
+func availableName(parent, old, name string) error {
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if strings.EqualFold(entry.Name(), name) && !strings.EqualFold(entry.Name(), old) {
+			e := fault.New("collision")
+			e.ClearInput = true
+			return e
+		}
+	}
+	return nil
+}
+
 func (s Store) Rename(state State, source platform.Snapshot, stem string) error {
 	name := stem + filepath.Ext(source.Path)
 	if err := apo.ValidateFilename(name); err != nil {
 		return err
 	}
 	return s.locked(state, func(now State) error {
-		if err := source.Check(); err != nil {
-			return err
-		}
-		old := filepath.Base(source.Path)
-		if old == name {
-			return nil
-		}
-		profiles, err := s.List()
+		old, err := s.RelativeProfile(source.Path)
 		if err != nil {
 			return err
 		}
-		for _, p := range profiles {
-			if strings.EqualFold(p.Filename, name) && p.Filename != old {
-				e := fault.New("collision")
-				e.ClearInput = true
-				return e
-			}
+		if err := source.Check(); err != nil {
+			return err
+		}
+		if old == name {
+			return nil
+		}
+		if err := availableName(filepath.Dir(source.Path), filepath.Base(old), filepath.Base(name)); err != nil {
+			return err
 		}
 		target := s.ProfilePath(name)
 		if err := platform.Rename(source.Path, target); err != nil {
@@ -210,10 +229,14 @@ func (s Store) Rename(state State, source platform.Snapshot, stem string) error 
 
 func (s Store) Remove(state State, source platform.Snapshot) error {
 	return s.locked(state, func(now State) error {
+		name, err := s.RelativeProfile(source.Path)
+		if err != nil {
+			return err
+		}
 		if err := source.Check(); err != nil {
 			return err
 		}
-		changed := now.Document.Enabled && strings.EqualFold(now.Document.Filename, filepath.Base(source.Path))
+		changed := now.Document.Enabled && strings.EqualFold(now.Document.Filename, name)
 		var disabled platform.Snapshot
 		if changed {
 			data, err := now.Document.Select(now.Document.Filename, false)

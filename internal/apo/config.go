@@ -45,10 +45,13 @@ func lines(data []byte) []line {
 }
 
 func ValidateFilename(name string) error {
-	if !utf8.ValidString(name) || len(name) == 0 || !strings.HasSuffix(strings.ToLower(name), ".txt") {
+	if !utf8.ValidString(name) || len(name) == 0 || strings.TrimSpace(name) == "" || strings.HasSuffix(name, ".") || strings.HasSuffix(name, " ") {
 		return fault.New("filename")
 	}
-	stem := name[:len(name)-4]
+	stem := name
+	if dot := strings.LastIndexByte(name, '.'); dot >= 0 {
+		stem = name[:dot]
+	}
 	if stem == "" || strings.EqualFold(stem, "None") || strings.TrimSpace(stem) == "" || strings.HasSuffix(stem, ".") || strings.HasSuffix(stem, " ") {
 		return fault.New("filename")
 	}
@@ -63,6 +66,20 @@ func ValidateFilename(name string) error {
 	}
 	if len([]rune(base)) == 4 && (strings.HasPrefix(base, "COM") || strings.HasPrefix(base, "LPT")) && strings.ContainsRune("123456789¹²³", []rune(base)[3]) {
 		return fault.New("filename")
+	}
+	return nil
+}
+
+// validateIncludePath also reads legacy category references so they can be disabled.
+func validateIncludePath(name string) error {
+	parts := strings.Split(name, `\`)
+	if len(parts) > 2 || strings.Contains(name, "/") {
+		return fault.New("filename")
+	}
+	for _, part := range parts {
+		if err := ValidateFilename(part); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -126,7 +143,7 @@ func Parse(data []byte) (Document, error) {
 				return d, damaged()
 			}
 			d.Filename = strings.TrimPrefix(target, prefix)
-			if ValidateFilename(d.Filename) != nil {
+			if validateIncludePath(d.Filename) != nil {
 				return d, damaged()
 			}
 		}
@@ -150,7 +167,9 @@ func (d Document) Select(filename string, enabled bool) ([]byte, error) {
 	}
 	if filename != "" {
 		if err := ValidateFilename(filename); err != nil {
-			return nil, err
+			if enabled || filename != d.Filename || validateIncludePath(filename) != nil {
+				return nil, err
+			}
 		}
 	} else if enabled {
 		return nil, damaged()

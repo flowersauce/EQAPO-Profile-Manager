@@ -109,7 +109,7 @@ func runWorker(context platform.ElevationContext, args []string) int {
 	if err != nil {
 		return 1
 	}
-	settingsPath, err := settings.PathFor(exe, context.LocalAppData)
+	settingsPath, err := settings.PathForFamily(exe, context.LocalAppData, context.PackageFamily)
 	if err != nil {
 		return 1
 	}
@@ -156,7 +156,10 @@ func (r commitRequest) execute(command, settingsPath string) error {
 	}
 	store := core.Store{Root: r.Root}
 	if r.Operation == "deleteSource" {
-		if r.Source == nil || !samePath(filepath.Dir(r.TargetPath), store.ProfilesDir()) {
+		if r.Source == nil {
+			return fault.New("elevationContext")
+		}
+		if _, err := store.RelativeProfile(r.TargetPath); err != nil {
 			return fault.New("elevationContext")
 		}
 		return (core.ImportPlan{Source: *r.Source, Target: platform.Snapshot{Path: r.TargetPath}}).DeleteSource()
@@ -192,10 +195,10 @@ func (r commitRequest) execute(command, settingsPath string) error {
 		}
 		return store.Import(state, core.ImportPlan{Source: *r.Source, Target: *r.Target, Filename: r.Value})
 	case "rename", "remove":
-		if r.Source == nil || !samePath(filepath.Dir(r.Source.Path), store.ProfilesDir()) {
+		if r.Source == nil {
 			return fault.New("elevationContext")
 		}
-		if err := apo.ValidateFilename(filepath.Base(r.Source.Path)); err != nil {
+		if _, err := store.RelativeProfile(r.Source.Path); err != nil {
 			return err
 		}
 		if r.Operation == "rename" {

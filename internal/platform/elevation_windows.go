@@ -22,10 +22,11 @@ const elevationArgument = "--eqm-elevated-context"
 // ElevationContext keeps over-the-shoulder UAC in the invoking user's profile.
 // Operations travel only over the authenticated, process-bound local pipe.
 type ElevationContext struct {
-	Pipe         string `json:"pipe"`
-	Parent       uint32 `json:"parent"`
-	LocalAppData string `json:"local_app_data"`
-	Locale       string `json:"locale"`
+	Pipe          string `json:"pipe"`
+	Parent        uint32 `json:"parent"`
+	LocalAppData  string `json:"local_app_data"`
+	Locale        string `json:"locale"`
+	PackageFamily string `json:"package_family,omitempty"`
 }
 
 func LocalAppData() (string, error) { return windows.KnownFolderPath(windows.FOLDERID_LocalAppData, 0) }

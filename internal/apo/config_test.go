@@ -81,9 +81,42 @@ func TestWindowsFilenames(t *testing.T) {
 			t.Errorf("accepted %q", name)
 		}
 	}
-	for _, name := range []string{"耳机 EQ.txt", "Philips SHP9500.TXT", "model.v2.txt"} {
+	for _, name := range []string{"耳机 EQ.txt", "Philips SHP9500.TXT", "model.v2.txt", "耳机", "profile.cfg"} {
 		if err := ValidateFilename(name); err != nil {
 			t.Errorf("rejected %q: %v", name, err)
 		}
+	}
+}
+
+func TestLegacyCategoryIncludeCanBeReadAndDisabledOnly(t *testing.T) {
+	name := `耳塞\耳机.txt`
+	data := []byte(Begin + "\nInclude: eqm-profiles\\" + name + "\n" + End + "\n")
+	doc, err := Parse(data)
+	if err != nil || doc.Filename != name || !doc.Enabled {
+		t.Fatalf("legacy Include cannot be read: %+v %v", doc, err)
+	}
+	off, err := doc.Select(name, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabled, err := Parse(off)
+	if err != nil || disabled.Enabled || disabled.Filename != name {
+		t.Fatalf("legacy Include cannot be disabled: %+v %v", disabled, err)
+	}
+	for _, invalid := range []string{name, `A\B\file`, `..\file`, `A/file`, `C:\file`} {
+		if _, err := doc.Select(invalid, true); err == nil {
+			t.Fatalf("enabled a non-root Include: %q", invalid)
+		}
+	}
+	if _, err := doc.Select(`其他\耳机.txt`, false); err == nil {
+		t.Fatal("wrote a new category Include")
+	}
+	selected, err := doc.Select("耳机.txt", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := Parse(selected)
+	if err != nil || current.Filename != "耳机.txt" || !current.Enabled {
+		t.Fatalf("root Include cannot be selected: %+v %v", current, err)
 	}
 }

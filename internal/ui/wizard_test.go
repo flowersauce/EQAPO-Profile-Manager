@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -11,7 +12,13 @@ import (
 	"github.com/flowersauce/EQAPO-Profile-Manager/internal/i18n"
 )
 
-func key(code rune) tea.KeyPressMsg { return tea.KeyPressMsg{Code: code} }
+func key(code rune) tea.KeyPressMsg {
+	msg := tea.KeyPressMsg{Code: code}
+	if unicode.IsPrint(code) {
+		msg.Text = string(code)
+	}
+	return msg
+}
 
 func TestCompletedSnapshotIsNotPartOfDynamicView(t *testing.T) {
 	second := &Step{Question: "Second", Submit: func(string) (Transition, error) { return Transition{}, nil }}
@@ -116,7 +123,7 @@ func TestPromptKindsAndHintCursorPosition(t *testing.T) {
 	}
 }
 
-func TestUACNoticeAndRefusalKeepCurrentInput(t *testing.T) {
+func TestUACNoticeUsesWarningMarker(t *testing.T) {
 	step := &Step{Question: "Filename", Initial: "chosen name"}
 	m := New(step, i18n.ForLocale("en"), false)
 	m.busy = true
@@ -124,13 +131,47 @@ func TestUACNoticeAndRefusalKeepCurrentInput(t *testing.T) {
 	if !strings.Contains(m.View().Content, "! Approve UAC") {
 		t.Fatal("UAC warning has no marker")
 	}
-	m.Update(submitted{err: fault.New("elevationCancelled")})
-	if m.done || m.step != step || m.input.Value() != "chosen name" || !strings.Contains(m.View().Content, "! Administrator access was declined") {
-		t.Fatal("UAC refusal restarted or cleared the original step")
-	}
 	m.Update(submitted{err: fault.New("filename")})
 	if !strings.Contains(m.View().Content, "✗ ") {
 		t.Fatal("error uses a warning marker")
+	}
+}
+
+func TestUACRefusalClosesWizard(t *testing.T) {
+	imported := Result{Message: "Imported", Code: 0}
+	for _, tc := range []struct {
+		name string
+		step *Step
+	}{
+		{"input", &Step{Question: "Filename", Initial: "chosen name"}},
+		{"selection", &Step{Question: "Apply", Options: []Option{{Label: "Profile", Value: "profile.txt"}}}},
+		{"confirmation", &Step{Question: "Delete?", Confirm: true, Options: []Option{{Label: "Yes", Value: "yes"}}}},
+		{"source cleanup", &Step{Question: "Delete source?", Confirm: true, Options: []Option{{Label: "Yes", Value: "yes"}}, CancelResult: &imported}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			refusal := fault.New("elevationCancelled")
+			tc.step.Submit = func(string) (Transition, error) {
+				calls++
+				return Transition{}, refusal
+			}
+			m := New(tc.step, i18n.ForLocale("en"), false)
+			_, submit := m.Update(key(tea.KeyEnter))
+			if submit == nil {
+				t.Fatal("submission command missing")
+			}
+			_, quit := m.Update(submit())
+			if !m.done || quit == nil || m.View().Content != "" || m.Result.Err != refusal {
+				t.Fatal("UAC refusal left the wizard active or lost the cancellation")
+			}
+			if fault.ExitCode(m.Result.Err) != 2 || !fault.IsWarning(m.Result.Err) {
+				t.Fatal("UAC refusal did not retain cancellation status")
+			}
+			_, retry := m.Update(key(tea.KeyEnter))
+			if retry != nil || calls != 1 || len(m.completed) != 0 {
+				t.Fatal("cancelled operation was retried or reported as completed")
+			}
+		})
 	}
 }
 

@@ -18,6 +18,7 @@ Push-Location $repoRoot
 try {
     & $wix.Source build (Join-Path $repoRoot 'packaging/windows/Package.wxs') `
         -arch x64 -d "MsiVersion=$MsiVersion" -d "SourceDir=$SourceDir" `
+        -ext WixToolset.Util.wixext `
         -intermediateFolder $IntermediateDir -o $MsiPath
     if ($LASTEXITCODE -ne 0) { throw 'WiX MSI build failed.' }
 }

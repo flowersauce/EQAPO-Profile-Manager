@@ -34,9 +34,10 @@ type App struct {
 	openWith              func(string) error
 }
 
-var commands = []struct{ name, key string }{
-	{"switch", "commandSwitch"}, {"list", "commandList"}, {"import", "commandImport"},
-	{"remove", "commandRemove"}, {"show", "commandShow"}, {"open", "commandOpen"}, {"rename", "commandRename"}, {"init", "commandInit"},
+var commands = []struct{ name, alias, key string }{
+	{"import", "im", "commandImport"}, {"init", "in", "commandInit"},
+	{"list", "l", "commandList"}, {"open", "o", "commandOpen"}, {"print", "p", "commandPrint"},
+	{"remove", "rm", "commandRemove"}, {"rename", "rn", "commandRename"}, {"switch", "s", "commandSwitch"},
 }
 
 func Main(args []string, version string) int {
@@ -53,6 +54,11 @@ func Main(args []string, version string) int {
 		context.LocalAppData, err = platform.LocalAppData()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, ui.OutputTheme(os.Stderr).Feedback(i18n.ForLocale(locale).Error(err), fault.IsWarning(err)))
+			return 1
+		}
+		context.PackageFamily, err = platform.PackageFamilyName()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, ui.OutputTheme(os.Stderr).Feedback(i18n.ForLocale(locale).Error(err), false))
 			return 1
 		}
 	}
@@ -77,7 +83,7 @@ func Main(args []string, version string) int {
 	defer func() { a.worker.Close() }()
 	exe, err := os.Executable()
 	if err == nil {
-		a.SettingsPath, err = settings.PathFor(exe, context.LocalAppData)
+		a.SettingsPath, err = settings.PathForFamily(exe, context.LocalAppData, context.PackageFamily)
 	}
 	var code int
 	if err != nil {
@@ -97,7 +103,8 @@ func (a *App) Run(args []string) int {
 		command = args[0]
 		known := false
 		for _, c := range commands {
-			if command == c.name {
+			if command == c.name || command == c.alias {
+				command = c.name
 				known = true
 				break
 			}
@@ -105,6 +112,7 @@ func (a *App) Run(args []string) int {
 		if !known {
 			return a.fail(fault.New("usage"))
 		}
+		a.args = []string{command}
 	}
 	if command != "" && command != "list" && !a.Interactive {
 		return a.fail(fault.New("tty"))
@@ -138,8 +146,19 @@ func (a *App) Run(args []string) int {
 			fmt.Fprintln(a.Out, ui.OutputTheme(a.Out).Hint(a.Language.Text("empty")))
 			return 0
 		}
+		if a.Interactive {
+			theme := ui.OutputTheme(a.Out)
+			for i, option := range profileOptions(state) {
+				branch := "├"
+				if i == len(state.Profiles)-1 {
+					branch = "└"
+				}
+				fmt.Fprintf(a.Out, "%s %s\n", theme.Muted(branch), i18n.Safe(option.Label))
+			}
+			return 0
+		}
 		for _, p := range state.Profiles {
-			fmt.Fprintln(a.Out, i18n.Safe(p.Name()))
+			fmt.Fprintln(a.Out, i18n.Safe(p.Filename))
 		}
 		return 0
 	case "import":
@@ -225,7 +244,7 @@ func (a *App) overview(s *core.Store, state *core.State) {
 	if state == nil {
 		fmt.Fprintln(a.Out, branch(0, 1)+" "+theme.Warning(a.Language.Text("uninitialized")))
 	} else {
-		current := theme.Warning("None")
+		current := "None"
 		if state.Current != "" {
 			current = i18n.Safe(displayName(state.Current))
 		}
@@ -237,12 +256,39 @@ func (a *App) overview(s *core.Store, state *core.State) {
 	}
 	fmt.Fprintln(a.Out)
 	section("helpHeading")
-	for i, c := range commands {
-		fmt.Fprintf(a.Out, "%s %s %s%s %s %s\n", branch(i, len(commands)), theme.Muted("eqm"), theme.Focus(c.name), strings.Repeat(" ", 6-len(c.name)), theme.Muted("·"), a.Language.Text(c.key))
+	helpRows := make([][2]string, 0, len(commands))
+	aliases := make([]string, 0, len(commands))
+	for _, c := range commands {
+		label := "eqm " + highlightAlias(c.name, c.alias, theme)
+		helpRows = append(helpRows, [2]string{label, a.Language.Text(c.key)})
+		aliases = append(aliases, c.name+"="+c.alias)
+	}
+	rows(helpRows)
+	if !theme.Color {
+		fmt.Fprintln(a.Out, theme.Hint(a.Language.Text("aliasList", strings.Join(aliases, " · "))))
 	}
 }
 
-func displayName(filename string) string { return strings.TrimSuffix(filename, filepath.Ext(filename)) }
+func highlightAlias(name, alias string, theme ui.Theme) string {
+	var label strings.Builder
+	for _, letter := range name {
+		part := string(letter)
+		if strings.HasPrefix(alias, part) {
+			label.WriteString(theme.Alias(part))
+			alias = strings.TrimPrefix(alias, part)
+		} else {
+			label.WriteString(part)
+		}
+	}
+	return label.String()
+}
+
+func displayName(filename string) string { return (core.Profile{Filename: filename}).Name() }
+
+func profileStem(filename string) string {
+	name := filepath.Base(filename)
+	return strings.TrimSuffix(name, filepath.Ext(name))
+}
 
 func (a *App) done(key string, args ...any) ui.Transition {
 	return ui.Transition{Result: ui.Result{Message: a.Language.Text(key, args...)}}
@@ -289,20 +335,37 @@ func (a *App) initStep() *ui.Step {
 		}}
 }
 
+func profileOptions(state core.State) []ui.Option {
+	labels := make(map[string]int)
+	for _, profile := range state.Profiles {
+		labels[strings.ToUpper(profile.Name())]++
+	}
+	var options []ui.Option
+	for _, profile := range state.Profiles {
+		label := profile.Name()
+		if labels[strings.ToUpper(label)] > 1 {
+			label = profile.Filename
+		}
+		options = append(options, ui.Option{Label: label, Value: profile.Filename, Current: strings.EqualFold(state.Current, profile.Filename)})
+	}
+	return options
+}
+
 func (a *App) selectStep(command string, s core.Store, state core.State) *ui.Step {
-	keys := map[string]string{"switch": "selectSwitch", "show": "selectShow", "open": "selectOpen", "rename": "selectRename", "remove": "selectRemove"}
+	keys := map[string]string{"switch": "selectSwitch", "print": "selectPrint", "open": "selectOpen", "rename": "selectRename", "remove": "selectRemove"}
 	step := &ui.Step{Question: a.Language.Text(keys[command])}
 	if command == "switch" {
 		step.Help = a.Language.Text("chooseHelp") + " · " + a.Language.Text("appliedLegend")
 		step.Options = append(step.Options, ui.Option{Label: "None", Value: "", Current: state.Current == ""})
 	}
-	for _, p := range state.Profiles {
-		label := p.Name()
-		current := command == "switch" && strings.EqualFold(state.Current, p.Filename)
-		if current {
-			step.Selected = len(step.Options)
+	step.Options = append(step.Options, profileOptions(state)...)
+	if command == "switch" {
+		for i, option := range step.Options {
+			if option.Current {
+				step.Selected = i
+				break
+			}
 		}
-		step.Options = append(step.Options, ui.Option{Label: label, Value: p.Filename, Current: current})
 	}
 	step.Submit = func(filename string) (ui.Transition, error) {
 		if command == "switch" {
@@ -332,10 +395,10 @@ func (a *App) selectStep(command string, s core.Store, state core.State) *ui.Ste
 				return ui.Transition{}, fault.Wrap("openFailed", err)
 			}
 			return a.done("openDialogShown", displayName(filename)), nil
-		case "show":
+		case "print":
 			return ui.Transition{Result: ui.Result{Data: profile.Data}}, nil
 		case "rename":
-			return ui.Transition{Next: &ui.Step{Question: a.Language.Text("renameQuestion"), Hint: a.Language.Text("renameHint"), Initial: displayName(filename), Submit: func(name string) (ui.Transition, error) {
+			return ui.Transition{Next: &ui.Step{Question: a.Language.Text("renameQuestion"), Hint: a.Language.Text("renameHint"), Initial: profileStem(filename), Submit: func(name string) (ui.Transition, error) {
 				if err := a.commit(commitRequest{Operation: "rename", Root: s.Root, Config: &state.Config, Source: &profile, Value: name}, func() error { return s.Rename(state, profile, name) }); err != nil {
 					return ui.Transition{}, err
 				}
@@ -365,31 +428,36 @@ func (a *App) importStep(s core.Store, state core.State) *ui.Step {
 			if err != nil {
 				return ui.Transition{}, err
 			}
-			commit := func() (ui.Transition, error) {
-				if err := a.commit(commitRequest{Operation: "import", Root: s.Root, Config: &state.Config, Source: &plan.Source, Target: &plan.Target, Value: plan.Filename}, func() error { return s.Import(state, plan) }); err != nil {
-					return ui.Transition{}, err
-				}
-				result := a.done("imported", displayName(plan.Filename))
-				cleanup := a.confirm(a.Language.Text("deleteSourceQuestion"), func(yes bool) (ui.Transition, error) {
-					if yes {
-						if err := a.commit(commitRequest{Operation: "deleteSource", Root: s.Root, Source: &plan.Source, TargetPath: plan.Target.Path}, plan.DeleteSource); err != nil {
-							return ui.Transition{Result: ui.Result{Err: err}}, nil
-						}
-					}
-					return result, nil
-				})
-				cleanup.Help = plan.Source.Path
-				cleanup.CancelResult = &result.Result
-				return ui.Transition{Next: cleanup}, nil
-			}
-			if plan.Target.Info == nil {
-				return commit()
-			}
-			return ui.Transition{Next: a.confirm(a.Language.Text("overwriteQuestion", displayName(plan.Filename)), func(yes bool) (ui.Transition, error) {
-				if !yes {
-					return a.cancelled(), nil
-				}
-				return commit()
-			})}, nil
+			return a.importPlan(s, state, plan)
 		}}
+}
+
+func (a *App) importPlan(s core.Store, state core.State, plan core.ImportPlan) (ui.Transition, error) {
+	commit := func() (ui.Transition, error) {
+		request := commitRequest{Operation: "import", Root: s.Root, Config: &state.Config, Source: &plan.Source, Target: &plan.Target, Value: plan.Filename}
+		if err := a.commit(request, func() error { return s.Import(state, plan) }); err != nil {
+			return ui.Transition{}, err
+		}
+		result := a.done("imported", displayName(plan.Filename))
+		cleanup := a.confirm(a.Language.Text("deleteSourceQuestion"), func(yes bool) (ui.Transition, error) {
+			if yes {
+				if err := a.commit(commitRequest{Operation: "deleteSource", Root: s.Root, Source: &plan.Source, TargetPath: plan.Target.Path}, plan.DeleteSource); err != nil {
+					return ui.Transition{Result: ui.Result{Err: err}}, nil
+				}
+			}
+			return result, nil
+		})
+		cleanup.Help = plan.Source.Path
+		cleanup.CancelResult = &result.Result
+		return ui.Transition{Next: cleanup}, nil
+	}
+	if plan.Target.Info == nil {
+		return commit()
+	}
+	return ui.Transition{Next: a.confirm(a.Language.Text("overwriteQuestion", displayName(plan.Filename)), func(yes bool) (ui.Transition, error) {
+		if !yes {
+			return a.cancelled(), nil
+		}
+		return commit()
+	})}, nil
 }

@@ -9,10 +9,18 @@
 /config/
 portable.flag
 /dist/
+/output/
+/.release-stage-*/
 *.msi
+*.msix
 *.wixpdb
 /cmd/eqm/rsrc_windows_amd64.syso
 /AGENTS.md
+
+# Python icon tools (dependencies are tracked in uv.lock)
+/.venv/
+__pycache__/
+*.pyc
 
 # Go workspace files
 go.work

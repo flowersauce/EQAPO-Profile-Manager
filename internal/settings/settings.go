@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/flowersauce/EQAPO-Profile-Manager/internal/fault"
 	"github.com/flowersauce/EQAPO-Profile-Manager/internal/platform"
@@ -30,8 +31,29 @@ func Path() (string, error) {
 
 // PathFor performs no writes. localAppData belongs to the original invoking user.
 func PathFor(exe, localAppData string) (string, error) {
+	family, err := platform.PackageFamilyName()
+	if err != nil {
+		return "", err
+	}
+	return PathForFamily(exe, localAppData, family)
+}
+
+// PathForFamily keeps Store settings in the original user's package LocalState,
+// including when an elevated worker is launched with another account.
+func PathForFamily(exe, localAppData, family string) (string, error) {
 	if !filepath.IsAbs(exe) || !filepath.IsAbs(localAppData) {
 		return "", fault.New("settingsLocation")
+	}
+	if family != "" {
+		if !strings.Contains(family, "_") {
+			return "", fault.New("settingsLocation")
+		}
+		for _, r := range family {
+			if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || strings.ContainsRune(".-_", r)) {
+				return "", fault.New("settingsLocation")
+			}
+		}
+		return filepath.Join(localAppData, "Packages", family, "LocalState", "EQM", "config.json"), nil
 	}
 	flag := filepath.Join(filepath.Dir(exe), "portable.flag")
 	info, err := os.Lstat(flag)
